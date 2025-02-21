@@ -17,6 +17,7 @@ keyword_responses = {
     "audio": "test.mp3",       # When someone says "audio", reply with this audio
     "video": "test.mp4",       # When someone says "video", reply with this video
     "profits": "PROFITS.jpg",  # When someone says "profits", reply with PROFITS.jpg
+    "commercial": "commercial.mp4",  # When someone says "commercial", reply with commercial.mp4
     "slut": "SLUT.jpg"         # When someone says "slut", reply with SLUT.jpg
 }
 
