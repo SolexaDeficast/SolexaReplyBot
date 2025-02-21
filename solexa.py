@@ -3,23 +3,22 @@ import logging
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# Replace 'YOUR_TOKEN' with the token you got from BotFather
-TOKEN = '8065777106:AAFczkeWOT8oZFD6DRZNYI4cKhsHqO69BZk'
-
-# Define the keywords and corresponding media files
-keyword_responses = {
-    "audio": "test.mp3",       # When someone says "audio", reply with this audio
-    "video": "test.mp4",       # When someone says "video", reply with this video
-    "commercial": "commercial.mp4",       # When someone says "commercial", reply with this video
-    "profits": "PROFITS.jpg",  # When someone says "profits", reply with PROFITS.jpg
-    "slut": "SLUT.jpg"         # When someone says "slut", reply with SLUT.jpg
-}
-
 # Enable detailed logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
+
+# Read the bot token from the environment variable
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
+# Define the keywords and corresponding media files
+keyword_responses = {
+    "audio": "test.mp3",       # When someone says "audio", reply with this audio
+    "video": "test.mp4",       # When someone says "video", reply with this video
+    "profits": "PROFITS.jpg",  # When someone says "profits", reply with PROFITS.jpg
+    "slut": "SLUT.jpg"         # When someone says "slut", reply with SLUT.jpg
+}
 
 # Function to handle text messages
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
