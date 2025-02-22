@@ -1,11 +1,11 @@
 import os
-import logging
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 # Enable detailed logging
+import logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.DEBUG
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,7 @@ TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 # Define the keywords and corresponding media files
 keyword_responses = {
     "audio": "test.mp3",       # When someone says "audio", reply with this audio
+    "secret": "secret.mp3",       # When someone says "secret", reply with this audio
     "video": "test.mp4",       # When someone says "video", reply with this video
     "profits": "PROFITS.jpg",  # When someone says "profits", reply with PROFITS.jpg
     "commercial": "commercial.mp4",  # When someone says "commercial", reply with commercial.mp4
@@ -29,7 +30,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if the message contains any of the keywords
         for keyword, media_file in keyword_responses.items():
             if keyword in message_text:
-                logger.debug(f"Keyword '{keyword}' detected. Sending file: {media_file}")
+                logger.info(f"Keyword '{keyword}' detected. Sending file: {media_file}")
 
                 # Check if the file exists
                 if not os.path.exists(media_file):
@@ -58,7 +59,7 @@ async def main():
         # Add a message handler to respond to text messages
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-        # Start the bot
+        # Start the bot using polling
         await application.initialize()
         await application.start()
         await application.updater.start_polling()
