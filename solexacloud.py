@@ -1,6 +1,7 @@
 import os
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
+import asyncio
 
 # Enable detailed logging
 import logging
@@ -50,7 +51,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error handling message: {e}")
         await update.message.reply_text("An error occurred while processing your request.")
 
-# Function to set up the webhook
+# Function to set up the webhook with retry logic
 async def set_webhook(application: Application):
     # Get the Render-provided URL for your service
     webhook_url = os.getenv('RENDER_EXTERNAL_URL')
@@ -60,12 +61,21 @@ async def set_webhook(application: Application):
         logger.error("RENDER_EXTERNAL_URL is not set. Cannot set webhook.")
         return
 
-    # Set the webhook
-    try:
-        await application.bot.set_webhook(url=webhook_url)
-        logger.info(f"Webhook set to: {webhook_url}")
-    except Exception as e:
-        logger.error(f"Failed to set webhook: {e}")
+    # Set the webhook with retry logic
+    retries = 3
+    for attempt in range(retries):
+        try:
+            await application.bot.set_webhook(url=webhook_url)
+            logger.info(f"Webhook set to: {webhook_url}")
+            return
+        except Exception as e:
+            if "Too Many Requests" in str(e):
+                logger.warning(f"Flood control exceeded. Retrying in {attempt + 1} seconds...")
+                await asyncio.sleep(attempt + 1)  # Wait longer with each retry
+            else:
+                logger.error(f"Failed to set webhook: {e}")
+                return
+    logger.error("Failed to set webhook after multiple attempts.")
 
 # Main function to start the bot
 async def main():
