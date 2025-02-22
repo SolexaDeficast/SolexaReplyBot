@@ -58,7 +58,7 @@ async def set_webhook(application: Application):
     if webhook_url:
         webhook_url += "/telegram"  # Append the webhook path
     else:
-        logger.error("RENDER_EXTERNAL_URL is not set. Cannot set webhook.")
+        logger.warning("RENDER_EXTERNAL_URL is not set. Falling back to polling.")
         return
 
     # Set the webhook with retry logic
@@ -72,6 +72,9 @@ async def set_webhook(application: Application):
             if "Too Many Requests" in str(e):
                 logger.warning(f"Flood control exceeded. Retrying in {attempt + 1} seconds...")
                 await asyncio.sleep(attempt + 1)  # Wait longer with each retry
+            elif "Bad Request" in str(e):
+                logger.error(f"Invalid webhook URL: {e}")
+                return
             else:
                 logger.error(f"Failed to set webhook: {e}")
                 return
@@ -86,17 +89,25 @@ async def main():
         # Add a message handler to respond to text messages
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-        # Set up the webhook
-        await set_webhook(application)
+        # Check if RENDER_EXTERNAL_URL is set (for Render deployment)
+        if os.getenv('RENDER_EXTERNAL_URL'):
+            # Use webhooks for Render deployment
+            await set_webhook(application)
 
-        # Start the bot
-        await application.initialize()
-        await application.start()
-        await application.updater.start_webhook(
-            listen="0.0.0.0",  # Listen on all interfaces
-            port=int(os.getenv('PORT', 8080)),  # Use the port provided by Render
-            url_path="telegram"  # Path for the webhook
-        )
+            # Start the bot with webhooks
+            await application.initialize()
+            await application.start()
+            await application.updater.start_webhook(
+                listen="0.0.0.0",  # Listen on all interfaces
+                port=int(os.getenv('PORT', 8080)),  # Use the port provided by Render
+                url_path="telegram"  # Path for the webhook
+            )
+        else:
+            # Use polling for local testing
+            logger.info("Starting bot with polling...")
+            await application.initialize()
+            await application.start()
+            await application.updater.start_polling()
 
         logger.info("Bot is running...")
         print("Bot is running...")
