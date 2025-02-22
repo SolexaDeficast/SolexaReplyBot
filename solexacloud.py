@@ -1,6 +1,13 @@
 import os
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
+
+# Enable detailed logging
+import logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # Read the bot token from the environment variable
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -23,11 +30,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if the message contains any of the keywords
         for keyword, media_file in keyword_responses.items():
             if keyword in message_text:
-                print(f"Keyword '{keyword}' detected. Sending file: {media_file}")
+                logger.info(f"Keyword '{keyword}' detected. Sending file: {media_file}")
 
                 # Check if the file exists
                 if not os.path.exists(media_file):
-                    print(f"File not found: {media_file}")
+                    logger.error(f"File not found: {media_file}")
                     await update.message.reply_text(f"Sorry, the file '{media_file}' is missing.")
                     return
 
@@ -40,15 +47,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_photo(photo=open(media_file, 'rb'))
                 break
     except Exception as e:
-        print(f"Error handling message: {e}")
+        logger.error(f"Error handling message: {e}")
         await update.message.reply_text("An error occurred while processing your request.")
 
 # Function to set up the webhook
 async def set_webhook(application: Application):
     # Get the Render-provided URL for your service
-    webhook_url = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"
-    await application.bot.set_webhook(url=webhook_url)
-    print(f"Webhook set to: {webhook_url}")
+    webhook_url = os.getenv('RENDER_EXTERNAL_URL')
+    if webhook_url:
+        webhook_url += "/telegram"  # Append the webhook path
+    else:
+        logger.error("RENDER_EXTERNAL_URL is not set. Cannot set webhook.")
+        return
+
+    # Set the webhook
+    try:
+        await application.bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook set to: {webhook_url}")
+    except Exception as e:
+        logger.error(f"Failed to set webhook: {e}")
 
 # Main function to start the bot
 async def main():
@@ -71,8 +88,15 @@ async def main():
             url_path="telegram"  # Path for the webhook
         )
 
+        logger.info("Bot is running...")
         print("Bot is running...")
+
+        # Keep the bot running until manually stopped
+        while True:
+            await asyncio.sleep(1)
+
     except Exception as e:
+        logger.error(f"Error starting bot: {e}")
         print(f"Error starting bot: {e}")
 
 if __name__ == '__main__':
