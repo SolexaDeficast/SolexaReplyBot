@@ -61,6 +61,12 @@ async def set_webhook(application: Application):
         logger.warning("RENDER_EXTERNAL_URL is not set. Falling back to polling.")
         return
 
+    # Check if the webhook is already set to avoid unnecessary API calls
+    current_webhook_info = await application.bot.get_webhook_info()
+    if current_webhook_info.url == webhook_url:
+        logger.info(f"Webhook is already set to: {webhook_url}")
+        return
+
     # Set the webhook with retry logic
     retries = 3
     for attempt in range(retries):
