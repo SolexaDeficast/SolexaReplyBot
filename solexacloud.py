@@ -1,106 +1,62 @@
 import os
 import logging
 import asyncio
-import fastapi
+from fastapi import FastAPI, Request
 import uvicorn
 from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 
-# Enable detailed logging
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+WEBHOOK_URL_PATH = "/telegram"
+WEBHOOK_URL = f"{os.getenv('EXTERNAL_URL')}{WEBHOOK_URL_PATH}"
+
+app = FastAPI()
+
+# Set up logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
 logger = logging.getLogger(__name__)
 
-# Read the bot token from the environment variable
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-RENDER_EXTERNAL_URL = os.getenv('RENDER_EXTERNAL_URL')
+# Initialize Telegram bot
+application = Application.builder().token(TOKEN).build()
 
-# Define the keywords and corresponding media files
-keyword_responses = {
-    "audio": "test.mp3",
-    "secret": "secret.mp3",
-    "video": "test.mp4",
-    "profits": "PROFITS.jpg",
-    "commercial": "commercial.mp4",
-    "slut": "SLUT.jpg"
-}
-
-# FastAPI for keeping the Render service alive
-app = fastapi.FastAPI()
-
-@app.get("/")
-def read_root():
-    return {"status": "Bot is running"}
-
-# Function to handle text messages
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@app.post(WEBHOOK_URL_PATH)
+async def receive_update(request: Request):
+    """Handle incoming Telegram updates."""
     try:
-        message_text = update.message.text.lower()
-        for keyword, media_file in keyword_responses.items():
-            if keyword in message_text:
-                logger.info(f"Keyword '{keyword}' detected. Sending file: {media_file}")
-
-                if not os.path.exists(media_file):
-                    logger.error(f"File not found: {media_file}")
-                    await update.message.reply_text(f"Sorry, the file '{media_file}' is missing.")
-                    return
-
-                if media_file.endswith('.mp3'):
-                    await update.message.reply_audio(audio=open(media_file, 'rb'))
-                elif media_file.endswith('.mp4'):
-                    await update.message.reply_video(video=open(media_file, 'rb'))
-                elif media_file.endswith('.jpg'):
-                    await update.message.reply_photo(photo=open(media_file, 'rb'))
-                break
+        data = await request.json()
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+        return {"status": "ok"}
     except Exception as e:
-        logger.error(f"Error handling message: {e}")
-        await update.message.reply_text("An error occurred while processing your request.")
+        logger.error(f"Error processing update: {e}")
+        return {"status": "error", "message": str(e)}
 
-# Function to set up the webhook with retry logic
-async def set_webhook(application: Application):
-    if not RENDER_EXTERNAL_URL:
-        logger.warning("RENDER_EXTERNAL_URL is not set. Falling back to polling.")
-        return
+async def start_bot():
+    """Set up webhook and start the bot."""
+    logger.info(f"Setting webhook to {WEBHOOK_URL}")
+    await application.bot.set_webhook(WEBHOOK_URL)
+    logger.info("Webhook set successfully!")
 
-    webhook_url = f"{RENDER_EXTERNAL_URL}/telegram"
-    
-    # Check if the webhook is already set
-    current_webhook_info = await application.bot.get_webhook_info()
-    if current_webhook_info.url == webhook_url:
-        logger.info(f"Webhook is already set to: {webhook_url}")
-        return
+    # Add handlers
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Try setting the webhook
-    try:
-        await application.bot.set_webhook(url=webhook_url)
-        logger.info(f"Webhook set to: {webhook_url}")
-    except Exception as e:
-        logger.error(f"Failed to set webhook: {e}")
+    logger.info("Bot is running...")
 
-# Main function to start the bot
-async def main():
-    try:
-        application = Application.builder().token(TOKEN).build()
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+def start_command(update: Update, context: CallbackContext):
+    """Respond to /start command."""
+    update.message.reply_text("Hello! I am your bot.")
 
-        if RENDER_EXTERNAL_URL:
-            await set_webhook(application)
-            await application.initialize()
-            await application.start()
-        else:
-            logger.info("Starting bot with polling...")
-            await application.initialize()
-            await application.start()
-            await application.updater.start_polling()
+def handle_message(update: Update, context: CallbackContext):
+    """Handle text messages."""
+    text = update.message.text
+    update.message.reply_text(f"You said: {text}")
 
-        logger.info("Bot is running...")
-
-        # Start FastAPI web server to keep Render alive
-        config = uvicorn.Config(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
-        server = uvicorn.Server(config)
-        await server.serve()
-
-    except Exception as e:
-        logger.error(f"Error starting bot: {e}")
-
-if __name__ == '__main__':
-    asyncio.run(main())
+if __name__ == "__main__":
+    # Run the FastAPI app and start the bot
+    loop = asyncio.get_event_loop()
+    loop.create_task(start_bot())
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
