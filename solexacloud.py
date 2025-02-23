@@ -23,7 +23,8 @@ keyword_responses = {
     "video": "test.mp4",
     "profits": "PROFITS.jpg",
     "commercial": "commercial.mp4",
-    "slut": "SLUT.jpg"
+    "slut": "SLUT.jpg",
+    "launch cat": "launchcat.gif"  # New GIF support
 }
 
 # Initialize FastAPI
@@ -57,6 +58,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await update.message.reply_video(video=media)
                         elif media_file.endswith('.jpg'):
                             await update.message.reply_photo(photo=media)
+                        elif media_file.endswith('.gif'):  # New GIF support
+                            await update.message.reply_animation(animation=media)
                     break  # Stop after first match
     except Exception as e:
         logger.error(f"Error handling message: {e}")
