@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 from fastapi import FastAPI, Request
+from fastapi.lifecycle import Lifespan
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
@@ -25,10 +26,10 @@ keyword_responses = {
     "slut": "SLUT.jpg"
 }
 
-# Initialize FastAPI app
+# Initialize FastAPI with lifespan handler
 app = FastAPI()
 
-# Initialize the Telegram bot application
+# Initialize Telegram bot
 application = Application.builder().token(TOKEN).build()
 
 # Function to handle text messages
@@ -71,7 +72,7 @@ async def telegram_webhook(request: Request):
         data = await request.json()
         update = Update.de_json(data, application.bot)
 
-        # Ensure the bot application is initialized before processing updates
+        # Ensure bot application is initialized before processing updates
         if not application.running:
             logger.warning("Application is not running. Initializing now...")
             await application.initialize()
@@ -81,8 +82,9 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         logger.error(f"Error processing webhook update: {e}")
 
-# Function to start the bot
-async def start_bot():
+# Lifespan event handler to start the bot properly
+@app.on_event("startup")
+async def startup_event():
     try:
         logger.info("Starting bot initialization...")
 
@@ -96,10 +98,4 @@ async def start_bot():
         logger.info(f"Webhook set to: {WEBHOOK_URL}")
 
         logger.info("Bot is fully running...")
-    except Exception as e:
-        logger.error(f"Error starting bot: {e}")
-
-# Ensure FastAPI and Telegram bot run together properly
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(start_bot())  # Start bot as background task
+    except Ex
