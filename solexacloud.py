@@ -70,6 +70,13 @@ async def telegram_webhook(request: Request):
     try:
         data = await request.json()
         update = Update.de_json(data, application.bot)
+
+        # Ensure the bot application is initialized before processing updates
+        if not application.running:
+            logger.warning("Application is not running. Initializing now...")
+            await application.initialize()
+            await application.start()
+
         await application.process_update(update)
     except Exception as e:
         logger.error(f"Error processing webhook update: {e}")
@@ -77,17 +84,22 @@ async def telegram_webhook(request: Request):
 # Function to start the bot
 async def start_bot():
     try:
-        # Set the webhook
+        logger.info("Starting bot initialization...")
+
+        # Initialize and start the bot
+        await application.initialize()
+        await application.start()
+
+        # Set webhook
         await application.bot.delete_webhook()
         await application.bot.set_webhook(WEBHOOK_URL)
         logger.info(f"Webhook set to: {WEBHOOK_URL}")
 
-        # Start the application
-        await application.initialize()
-        await application.start()
-        logger.info("Bot is running...")
+        logger.info("Bot is fully running...")
     except Exception as e:
         logger.error(f"Error starting bot: {e}")
 
-# Run the bot on startup
-asyncio.create_task(start_bot())
+# Ensure FastAPI and Telegram bot run together properly
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(start_bot())  # Start bot as background task
