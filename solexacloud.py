@@ -57,12 +57,17 @@ async def main():
         webhook_url = f"{WEBHOOK_URL}/telegram"
         logger.info(f"Starting bot with webhook: {webhook_url}")
         
-        await application.bot.set_webhook(url=webhook_url)
-        await application.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.getenv('PORT', 10000)),  # Bind to the port specified by Render
-            webhook_path="/telegram"
-        )
+        await application.bot.set_webhook(f"{os.getenv('RENDER_EXTERNAL_URL')}/telegram")
+
+# Start webhook
+await application.initialize()
+await application.start()
+await application.updater.start_webhook(
+    listen="0.0.0.0",
+    port=int(os.getenv("PORT", 10000)),
+    url_path="telegram"
+)
+
     else:
         logger.info("Starting bot with polling...")
         await application.run_polling()
