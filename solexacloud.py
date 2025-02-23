@@ -1,11 +1,11 @@
 import os
 import logging
 import asyncio
-import random
 from fastapi import FastAPI, Request
 import uvicorn
-from telegram import Update, ChatPermissions
-from telegram.ext import Application, MessageHandler, filters, ContextTypes, ChatMemberHandler
+from telegram import Update, Video
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from moviepy.editor import VideoFileClip  # Library for getting video metadata
 
 # Enable detailed logging
 logging.basicConfig(
@@ -15,10 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Read environment variables
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-WEBHOOK_URL = f"{os.getenv('RENDER_EXTERNAL_URL', '').rstrip('/')}/telegram"  # Ensure this is set in Render
-
-# Dictionary to store pending CAPTCHA challenges
-pending_captchas = {}
+WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"  # Ensure this is set in Render
 
 # Define the keywords and corresponding media files
 keyword_responses = {
@@ -28,7 +25,7 @@ keyword_responses = {
     "profits": "PROFITS.jpg",
     "commercial": "commercial.mp4",
     "slut": "SLUT.jpg",
-    "launch cat": "launchcat.gif"  # New GIF support
+    "launch cat": "launchcat.gif"
 }
 
 # Initialize FastAPI
@@ -37,115 +34,42 @@ app = FastAPI()
 # Initialize Telegram bot
 application = Application.builder().token(TOKEN).build()
 
-# Function to handle new chat members (Captcha System)
-async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.new_chat_members:
-        logger.warning("Received an update without new_chat_members. Skipping...")
-        return
-
-    for member in update.message.new_chat_members:
-        user_id = member.id
-        chat_id = update.message.chat.id
-        
-        # Generate a simple math problem
-        num1, num2 = random.randint(1, 10), random.randint(1, 10)
-        answer = num1 + num2
-        pending_captchas[user_id] = (answer, chat_id)
-        
-        # Restrict user until they solve the CAPTCHA
-        await context.bot.restrict_chat_member(
-            chat_id, user_id, ChatPermissions(can_send_messages=False)
-        )
-        
-        # Send the math CAPTCHA question
-        await context.bot.send_message(
-            chat_id, text=f"@{member.username or member.full_name}, welcome!\nPlease solve this CAPTCHA within 120 seconds: {num1} + {num2} = ?"
-        )
-        
-        # Schedule the timeout task
-        asyncio.create_task(captcha_timeout(user_id, chat_id))
-
-# Background task to handle CAPTCHA timeout
-async def captcha_timeout(user_id, chat_id):
-    await asyncio.sleep(120)
-    if user_id in pending_captchas:
-        await application.bot.ban_chat_member(chat_id, user_id)
-        del pending_captchas[user_id]
-
-# Function to handle CAPTCHA responses
-async def handle_captcha_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Ensure the update contains a message
-    if not update.message:
-        logger.warning("Received an update without a message field. Skipping...")
-        return
-
-    user_id = update.message.from_user.id
-    chat_id = update.message.chat.id
-
-    if user_id in pending_captchas:
-        correct_answer, expected_chat_id = pending_captchas[user_id]
-        
-        # Ensure the message is in the right chat
-        if chat_id != expected_chat_id:
-            return
-        
-        # Check if the answer is correct
-        if update.message.text.strip() == str(correct_answer):
-            await context.bot.restrict_chat_member(
-                chat_id, user_id, ChatPermissions(can_send_messages=True)
-            )
-            await update.message.reply_text("✅ Verified! You can now chat.")
-            del pending_captchas[user_id]
-        else:
-            await update.message.reply_text("❌ Incorrect answer. Try again!")
-
-# Function to handle text messages (Keyword Replies)
+# Function to handle text messages
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Ensure the update contains a message
-    if not update.message:
-        logger.warning("Received an update without a message field. Skipping...")
-        return
-
     try:
-        message_text = update.message.text.lower()
-        logger.info(f"Processing message: {message_text}")
-        
-        # Check for keywords
-        for keyword, media_file in keyword_responses.items():
-            if keyword in message_text:
-                logger.info(f"Keyword '{keyword}' detected. Sending file: {media_file}")
-                
-                # Check if the file exists
-                if not os.path.exists(media_file):
-                    logger.error(f"File not found: {media_file}")
-                    await update.message.reply_text(f"Sorry, the file '{media_file}' is missing.")
-                    return
-                
-                # Send appropriate media
-                try:
-                    logger.info(f"Opening file: {media_file}")
+        if update.message:
+            message_text = update.message.text.lower()
+
+            # Check for keywords
+            for keyword, media_file in keyword_responses.items():
+                if keyword in message_text:
+                    logger.info(f"Keyword '{keyword}' detected. Sending file: {media_file}")
+
+                    # Check if the file exists
+                    if not os.path.exists(media_file):
+                        logger.error(f"File not found: {media_file}")
+                        await update.message.reply_text(f"Sorry, the file '{media_file}' is missing.")
+                        return
+
+                    # Send appropriate media
                     with open(media_file, 'rb') as media:
-                        logger.info(f"Sending media file: {media_file}")
                         if media_file.endswith('.mp3'):
                             await update.message.reply_audio(audio=media)
                         elif media_file.endswith('.mp4'):
-                            await update.message.reply_video(video=media)
+                            clip = VideoFileClip(media_file)  # Get video metadata
+                            width, height = clip.size
+                            await update.message.reply_video(video=media, width=width, height=height, supports_streaming=True)
+                            clip.close()
                         elif media_file.endswith('.jpg'):
                             await update.message.reply_photo(photo=media)
                         elif media_file.endswith('.gif'):
                             await update.message.reply_animation(animation=media)
-                    logger.info(f"Successfully sent media file: {media_file}")
-                except Exception as e:
-                    logger.error(f"Error sending media file: {e}")
-                    await update.message.reply_text("An error occurred while sending the file.")
-                break  # Stop after first match
+                    break  # Stop after first match
     except Exception as e:
         logger.error(f"Error handling message: {e}")
         await update.message.reply_text("An error occurred while processing your request.")
 
-# Add handlers to the bot
-application.add_handler(ChatMemberHandler(handle_new_member, ChatMemberHandler.CHAT_MEMBER))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_captcha_response))
+# Add the message handler to the application
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 # Webhook endpoint to receive Telegram updates
@@ -153,7 +77,6 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 async def telegram_webhook(request: Request):
     try:
         data = await request.json()
-        logger.info(f"Received update: {data}")  # Log the raw update data
         update = Update.de_json(data, application.bot)
 
         if not application.running:
@@ -172,21 +95,18 @@ async def telegram_webhook(request: Request):
 async def startup_event():
     try:
         logger.info("Starting bot initialization...")
+
         await application.initialize()
         await application.start()
-        
-        # Check if a webhook is already set
-        current_webhook_info = await application.bot.get_webhook_info()
-        if current_webhook_info.url != WEBHOOK_URL:
-            await application.bot.delete_webhook()
-            await application.bot.set_webhook(WEBHOOK_URL)
-        
+
+        await application.bot.delete_webhook()
+        await application.bot.set_webhook(WEBHOOK_URL)
         logger.info(f"Webhook set to: {WEBHOOK_URL}")
+
         logger.info("Bot is fully running...")
     except Exception as e:
         logger.error(f"Error starting bot: {e}")
 
 # Ensure proper port binding for Render
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))  # Use PORT from Render or fallback to 10000
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=10000)
