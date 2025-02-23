@@ -13,3 +13,4 @@ Telethon==1.38.1
 tornado==6.4.2
 fastapi==0.110.0
 uvicorn==0.29.0
+moviepy
