@@ -3,8 +3,9 @@ import logging
 import asyncio
 from fastapi import FastAPI, Request
 import uvicorn
-from telegram import Update
+from telegram import Update, Video
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from moviepy.editor import VideoFileClip  # Library for getting video metadata
 
 # Enable detailed logging
 logging.basicConfig(
@@ -24,7 +25,7 @@ keyword_responses = {
     "profits": "PROFITS.jpg",
     "commercial": "commercial.mp4",
     "slut": "SLUT.jpg",
-    "launch cat": "launchcat.gif"  # New GIF support
+    "launch cat": "launchcat.gif"
 }
 
 # Initialize FastAPI
@@ -55,10 +56,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if media_file.endswith('.mp3'):
                             await update.message.reply_audio(audio=media)
                         elif media_file.endswith('.mp4'):
-                            await update.message.reply_video(video=media)
+                            clip = VideoFileClip(media_file)  # Get video metadata
+                            width, height = clip.size
+                            await update.message.reply_video(video=media, width=width, height=height, supports_streaming=True)
+                            clip.close()
                         elif media_file.endswith('.jpg'):
                             await update.message.reply_photo(photo=media)
-                        elif media_file.endswith('.gif'):  # New GIF support
+                        elif media_file.endswith('.gif'):
                             await update.message.reply_animation(animation=media)
                     break  # Stop after first match
     except Exception as e:
@@ -75,7 +79,6 @@ async def telegram_webhook(request: Request):
         data = await request.json()
         update = Update.de_json(data, application.bot)
 
-        # Ensure bot application is initialized before processing updates
         if not application.running:
             logger.warning("Application is not running. Initializing now...")
             await application.initialize()
@@ -93,11 +96,9 @@ async def startup_event():
     try:
         logger.info("Starting bot initialization...")
 
-        # Initialize and start the bot
         await application.initialize()
         await application.start()
 
-        # Set webhook
         await application.bot.delete_webhook()
         await application.bot.set_webhook(WEBHOOK_URL)
         logger.info(f"Webhook set to: {WEBHOOK_URL}")
