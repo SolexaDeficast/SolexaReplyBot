@@ -108,6 +108,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         message_text = update.message.text.lower()
+        logger.info(f"Processing message: {message_text}")
+        
         # Check for keywords
         for keyword, media_file in keyword_responses.items():
             if keyword in message_text:
@@ -120,15 +122,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 
                 # Send appropriate media
-                with open(media_file, 'rb') as media:
-                    if media_file.endswith('.mp3'):
-                        await update.message.reply_audio(audio=media)
-                    elif media_file.endswith('.mp4'):
-                        await update.message.reply_video(video=media)
-                    elif media_file.endswith('.jpg'):
-                        await update.message.reply_photo(photo=media)
-                    elif media_file.endswith('.gif'):
-                        await update.message.reply_animation(animation=media)
+                try:
+                    logger.info(f"Opening file: {media_file}")
+                    with open(media_file, 'rb') as media:
+                        logger.info(f"Sending media file: {media_file}")
+                        if media_file.endswith('.mp3'):
+                            await update.message.reply_audio(audio=media)
+                        elif media_file.endswith('.mp4'):
+                            await update.message.reply_video(video=media)
+                        elif media_file.endswith('.jpg'):
+                            await update.message.reply_photo(photo=media)
+                        elif media_file.endswith('.gif'):
+                            await update.message.reply_animation(animation=media)
+                    logger.info(f"Successfully sent media file: {media_file}")
+                except Exception as e:
+                    logger.error(f"Error sending media file: {e}")
+                    await update.message.reply_text("An error occurred while sending the file.")
                 break  # Stop after first match
     except Exception as e:
         logger.error(f"Error handling message: {e}")
@@ -136,8 +145,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Add handlers to the bot
 application.add_handler(ChatMemberHandler(handle_new_member, ChatMemberHandler.CHAT_MEMBER))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUP, handle_captcha_response))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUP, handle_message))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_captcha_response))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 # Webhook endpoint to receive Telegram updates
 @app.post("/telegram")
@@ -147,7 +156,6 @@ async def telegram_webhook(request: Request):
         logger.info(f"Received update: {data}")  # Log the raw update data
         update = Update.de_json(data, application.bot)
 
-        # Ensure bot application is initialized before processing updates
         if not application.running:
             logger.warning("Application is not running. Initializing now...")
             await application.initialize()
