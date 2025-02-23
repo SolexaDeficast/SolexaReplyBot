@@ -136,8 +136,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Add handlers to the bot
 application.add_handler(ChatMemberHandler(handle_new_member, ChatMemberHandler.CHAT_MEMBER))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_captcha_response))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUP, handle_captcha_response))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUP, handle_message))
 
 # Webhook endpoint to receive Telegram updates
 @app.post("/telegram")
