@@ -1,45 +1,42 @@
 import os
+import logging
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-import asyncio
 
-# Enable detailed logging
-import logging
+# Logging setup
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Read the bot token from the environment variable
+# Read environment variables
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL')  # Ensure this is set in Render's environment
 
-# Define the keywords and corresponding media files
+# Keyword responses
 keyword_responses = {
-    "audio": "test.mp3",       # When someone says "audio", reply with this audio
-    "secret": "secret.mp3",   # When someone says "secret", reply with this audio
-    "video": "test.mp4",      # When someone says "video", reply with this video
-    "profits": "PROFITS.jpg", # When someone says "profits", reply with PROFITS.jpg
-    "commercial": "commercial.mp4",  # When someone says "commercial", reply with commercial.mp4
-    "slut": "SLUT.jpg"        # When someone says "slut", reply with SLUT.jpg
+    "audio": "test.mp3",
+    "secret": "secret.mp3",
+    "video": "test.mp4",
+    "profits": "PROFITS.jpg",
+    "commercial": "commercial.mp4",
+    "slut": "SLUT.jpg"
 }
 
-# Function to handle text messages
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles incoming text messages."""
     try:
-        message_text = update.message.text.lower()  # Convert message to lowercase for case-insensitive matching
-
-        # Check if the message contains any of the keywords
+        message_text = update.message.text.lower()
         for keyword, media_file in keyword_responses.items():
             if keyword in message_text:
                 logger.info(f"Keyword '{keyword}' detected. Sending file: {media_file}")
 
-                # Check if the file exists
                 if not os.path.exists(media_file):
                     logger.error(f"File not found: {media_file}")
                     await update.message.reply_text(f"Sorry, the file '{media_file}' is missing.")
                     return
 
-                # Send the corresponding media file
+                # Send media based on file type
                 if media_file.endswith('.mp3'):
                     await update.message.reply_audio(audio=open(media_file, 'rb'))
                 elif media_file.endswith('.mp4'):
@@ -51,80 +48,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error handling message: {e}")
         await update.message.reply_text("An error occurred while processing your request.")
 
-# Function to set up the webhook with retry logic
-async def set_webhook(application: Application):
-    # Get the Render-provided URL for your service
-    webhook_url = os.getenv('RENDER_EXTERNAL_URL')
-    if webhook_url:
-        webhook_url += "/telegram"  # Append the webhook path
-    else:
-        logger.warning("RENDER_EXTERNAL_URL is not set. Falling back to polling.")
-        return
-
-    # Check if the webhook is already set to avoid unnecessary API calls
-    current_webhook_info = await application.bot.get_webhook_info()
-    if current_webhook_info.url == webhook_url:
-        logger.info(f"Webhook is already set to: {webhook_url}")
-        return
-
-    # Set the webhook with retry logic
-    retries = 3
-    for attempt in range(retries):
-        try:
-            await application.bot.set_webhook(url=webhook_url)
-            logger.info(f"Webhook set to: {webhook_url}")
-            return
-        except Exception as e:
-            if "Too Many Requests" in str(e):
-                logger.warning(f"Flood control exceeded. Retrying in {attempt + 1} seconds...")
-                await asyncio.sleep(attempt + 1)  # Wait longer with each retry
-            elif "Bad Request" in str(e):
-                logger.error(f"Invalid webhook URL: {e}")
-                return
-            else:
-                logger.error(f"Failed to set webhook: {e}")
-                return
-    logger.error("Failed to set webhook after multiple attempts.")
-
-# Main function to start the bot
 async def main():
-    try:
-        # Create the Application and pass it your bot's token
-        application = Application.builder().token(TOKEN).build()
+    """Starts the bot using webhook or polling."""
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-        # Add a message handler to respond to text messages
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-        # Check if RENDER_EXTERNAL_URL is set (for Render deployment)
-        if os.getenv('RENDER_EXTERNAL_URL'):
-            # Use webhooks for Render deployment
-            await set_webhook(application)
-
-            # Start the bot with webhooks
-            await application.initialize()
-            await application.start()
-            await application.updater.start_webhook(
-                listen="0.0.0.0",  # Listen on all interfaces
-                port=int(os.getenv('PORT', 8080)),  # Use the port provided by Render
-                url_path="telegram"  # Path for the webhook
-            )
-        else:
-            # Use polling for local testing
-            logger.info("Starting bot with polling...")
-            await application.initialize()
-            await application.start()
-            await application.updater.start_polling()
-
-        logger.info("Bot is running...")
-        print("Bot is running...")
-
-        # Keep the bot running until manually stopped
-        while True:
-            await asyncio.sleep(1)
-
-    except Exception as e:
-        logger.error(f"Error starting bot: {e}")
-        print(f"Error starting bot: {e}")
+    if WEBHOOK_URL:
+        webhook_url = f"{WEBHOOK_URL}/telegram"
+        logger.info(f"Starting bot with webhook: {webhook_url}")
+        
+        await application.bot.set_webhook(url=webhook_url)
+        await application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.getenv('PORT', 10000)),  # Bind to the port specified by Render
+            webhook_path="/telegram"
+        )
+    else:
+        logger.info("Starting bot with polling...")
+        await application.run_polling()
 
 if __name__ == '__main__':
     import asyncio
