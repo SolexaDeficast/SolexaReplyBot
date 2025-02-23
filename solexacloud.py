@@ -85,4 +85,24 @@ async def telegram_webhook(request: Request):
         return {"status": "error", "message": str(e)}
 
 # Startup event for setting webhook
-@app.on_event("startup
+@app.on_event("startup")
+async def startup_event():
+    try:
+        logger.info("Starting bot initialization...")
+
+        # Initialize and start the bot
+        await application.initialize()
+        await application.start()
+
+        # Set webhook
+        await application.bot.delete_webhook()
+        await application.bot.set_webhook(WEBHOOK_URL)
+        logger.info(f"Webhook set to: {WEBHOOK_URL}")
+
+        logger.info("Bot is fully running...")
+    except Exception as e:
+        logger.error(f"Error starting bot: {e}")
+
+# Ensure proper port binding for Render
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=10000)
