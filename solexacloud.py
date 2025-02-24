@@ -5,7 +5,7 @@ import asyncio
 from fastapi import FastAPI, Request
 import uvicorn
 from telegram import (
-    Update, Video, InlineKeyboardButton, InlineKeyboardMarkup
+    Update, Video, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 )
 from telegram.ext import (
     Application, MessageHandler, CallbackQueryHandler, CommandHandler,
@@ -63,8 +63,11 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
 
-                # Restrict the new member
-                await context.bot.restrict_chat_member(chat_id, user_id, permissions={})
+                # Restrict the new member (Mute them)
+                await context.bot.restrict_chat_member(
+                    chat_id, user_id,
+                    permissions=ChatPermissions(can_send_messages=False)
+                )
 
                 # Generate and store captcha
                 question, correct_answer, options = generate_captcha()
@@ -102,11 +105,14 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if selected_answer == correct_answer:
                 # Unrestrict the user
-                await context.bot.promote_chat_member(
+                await context.bot.restrict_chat_member(
                     chat_id, user_id,
-                    can_send_messages=True,
-                    can_send_media_messages=True,
-                    can_send_other_messages=True
+                    permissions=ChatPermissions(
+                        can_send_messages=True,
+                        can_send_media_messages=True,
+                        can_send_other_messages=True,
+                        can_add_web_page_previews=True
+                    )
                 )
 
                 await query.edit_message_text("✅ Verification successful! You can now participate in the chat.")
