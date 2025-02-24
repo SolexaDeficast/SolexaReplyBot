@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Read environment variables
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"  # Ensure this is set in Render
+WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"
 
 # Define the keywords and corresponding media files
 keyword_responses = {
@@ -37,24 +37,29 @@ app = FastAPI()
 # Initialize Telegram bot
 application = Application.builder().token(TOKEN).build()
 
-# Function to handle text messages (Keyword Replies)
+# Function to handle text messages (Keyword Replies & CAPTCHA Checks)
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.message.from_user.id
+        chat_id = update.message.chat.id
 
         # If user has a pending CAPTCHA, check their response
         if user_id in pending_captchas:
             if update.message.text.strip() == str(pending_captchas[user_id]["answer"]):
                 await update.message.reply_text("✅ Verification successful! You can now chat.")
                 del pending_captchas[user_id]  # Remove from pending list
-                await context.bot.restrict_chat_member(
-                    chat_id=update.message.chat.id,
-                    user_id=user_id,
-                    permissions=ChatPermissions(can_send_messages=True)
-                )
+
+                # Only attempt to unrestrict if the group is a supergroup
+                chat = await context.bot.get_chat(chat_id)
+                if chat.type == "supergroup":
+                    await context.bot.restrict_chat_member(
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        permissions=ChatPermissions(can_send_messages=True)
+                    )
             else:
                 await update.message.reply_text("❌ Incorrect answer. Try again.")
-            return  # Stop processing further
+            return  # Stop further processing
 
         # Handle keyword-based media sending
         message_text = update.message.text.lower()
@@ -85,18 +90,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_new_members(update: Update, context: CallbackContext):
     try:
         chat_id = update.message.chat.id
+        chat = await context.bot.get_chat(chat_id)  # Get chat info
+        is_supergroup = chat.type == "supergroup"
+
         for user in update.message.new_chat_members:
             user_id = user.id
             username = user.username or user.full_name
 
-            logger.info(f"New member detected: {username} (ID: {user_id})")
-
-            # Temporarily restrict user's ability to send messages
-            await context.bot.restrict_chat_member(
-                chat_id=chat_id,
-                user_id=user_id,
-                permissions=ChatPermissions(can_send_messages=False)
-            )
+            logger.info(f"New member detected: {username} (ID: {user_id}) in {chat.title}")
 
             # Generate a CAPTCHA math question
             num1 = random.randint(1, 10)
@@ -104,11 +105,28 @@ async def handle_new_members(update: Update, context: CallbackContext):
             answer = num1 + num2
             pending_captchas[user_id] = {"chat_id": chat_id, "answer": answer}
 
+            # If it's a supergroup, restrict user temporarily
+            if is_supergroup:
+                try:
+                    await context.bot.restrict_chat_member(
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        permissions=ChatPermissions(can_send_messages=False)
+                    )
+                except Exception as e:
+                    logger.error(f"Could not restrict user {user_id}: {e}")
+
             # Send CAPTCHA message
             await update.message.reply_text(
                 f"🚨 Welcome {username}! Please verify you are human.\nSolve this to chat: **{num1} + {num2} = ?**\n(Reply with the correct answer within 120 seconds.)",
                 parse_mode="Markdown"
             )
+
+            # If the group is not a supergroup, notify admins
+            if not is_supergroup:
+                await update.message.reply_text(
+                    "⚠️ This group is a **basic group**. CAPTCHA will work, but users won't be restricted.\nTo enable full verification, upgrade to a **supergroup**!"
+                )
 
             # Set a timeout to remove the user if they fail to respond
             context.job_queue.run_once(kick_unverified_user, 120, chat_id=chat_id, user_id=user_id)
