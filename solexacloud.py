@@ -70,9 +70,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
             # Restrict the new member's permissions
             permissions = ChatPermissions(
-                can_send_messages=False,
-                can_send_media_messages=False,
-                can_send_other_messages=False
+                can_send_messages=False
             )
             await context.bot.restrict_chat_member(chat_id, user_id, permissions)
             logger.info(f"User {username} restricted in supergroup.")
@@ -122,13 +120,10 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Grant full permissions including GIFs and stickers
             permissions = ChatPermissions(
                 can_send_messages=True,
-                can_send_media_messages=True,
-                can_send_other_messages=True,
-                can_send_polls=True,
                 can_send_photos=True,
                 can_send_videos=True,
-                can_send_video_notes=True,
-                can_send_voice_notes=True,
+                can_send_other_messages=True,
+                can_send_polls=True,
                 can_send_animations=True,
                 can_add_web_page_previews=True
             )
