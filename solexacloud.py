@@ -124,7 +124,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 can_send_videos=True,
                 can_send_other_messages=True,
                 can_send_polls=True,
-                can_send_animations=True,
                 can_add_web_page_previews=True
             )
             await context.bot.restrict_chat_member(chat_id, user_id, permissions)
