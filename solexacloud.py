@@ -49,7 +49,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("✅ Verification successful! You can now chat.")
                 del pending_captchas[user_id]  # Remove from pending list
 
-                # Only attempt to unrestrict if the group is a supergroup
+                # Check if the chat is a supergroup before unrestricting
                 chat = await context.bot.get_chat(chat_id)
                 if chat.type == "supergroup":
                     await context.bot.restrict_chat_member(
@@ -91,7 +91,8 @@ async def handle_new_members(update: Update, context: CallbackContext):
     try:
         chat_id = update.message.chat.id
         chat = await context.bot.get_chat(chat_id)  # Get chat info
-        is_supergroup = chat.type == "supergroup"
+        chat_type = chat.type  # Get chat type
+        logger.info(f"Group Type: {chat_type} | Chat Title: {chat.title}")
 
         for user in update.message.new_chat_members:
             user_id = user.id
@@ -105,16 +106,19 @@ async def handle_new_members(update: Update, context: CallbackContext):
             answer = num1 + num2
             pending_captchas[user_id] = {"chat_id": chat_id, "answer": answer}
 
-            # If it's a supergroup, restrict user temporarily
-            if is_supergroup:
+            # Only restrict if it's a supergroup
+            if chat_type == "supergroup":
                 try:
                     await context.bot.restrict_chat_member(
                         chat_id=chat_id,
                         user_id=user_id,
                         permissions=ChatPermissions(can_send_messages=False)
                     )
+                    logger.info(f"User {username} restricted in supergroup.")
                 except Exception as e:
                     logger.error(f"Could not restrict user {user_id}: {e}")
+            else:
+                logger.warning(f"Cannot restrict {username}. {chat.title} is a basic group.")
 
             # Send CAPTCHA message
             await update.message.reply_text(
@@ -123,7 +127,7 @@ async def handle_new_members(update: Update, context: CallbackContext):
             )
 
             # If the group is not a supergroup, notify admins
-            if not is_supergroup:
+            if chat_type != "supergroup":
                 await update.message.reply_text(
                     "⚠️ This group is a **basic group**. CAPTCHA will work, but users won't be restricted.\nTo enable full verification, upgrade to a **supergroup**!"
                 )
@@ -139,10 +143,9 @@ async def kick_unverified_user(context: CallbackContext):
     user_id = job.user_id
     chat_id = job.chat_id
 
-    # If user is still in pending CAPTCHA list, remove them
     if user_id in pending_captchas:
         try:
-            await context.bot.kick_chat_member(chat_id, user_id)
+            await context.bot.ban_chat_member(chat_id, user_id)
             del pending_captchas[user_id]
             logger.info(f"User {user_id} removed for failing CAPTCHA.")
         except Exception as e:
