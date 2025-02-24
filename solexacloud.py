@@ -1,17 +1,11 @@
 import os
 import logging
-import random
 import asyncio
+import random
 from fastapi import FastAPI, Request
 import uvicorn
-from telegram import (
-    Update, Video, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
-)
-from telegram.ext import (
-    Application, MessageHandler, CallbackQueryHandler, CommandHandler,
-    filters, ContextTypes
-)
-from moviepy.editor import VideoFileClip  # Library for getting video metadata
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ChatPermissions
+from telegram.ext import Application, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # Enable detailed logging
 logging.basicConfig(
@@ -21,9 +15,9 @@ logger = logging.getLogger(__name__)
 
 # Read environment variables
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"  # Ensure this is set in Render
+WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"
 
-# Define keyword responses
+# Define the keywords and corresponding media files
 keyword_responses = {
     "audio": "test.mp3",
     "secret": "secret.mp3",
@@ -40,100 +34,8 @@ app = FastAPI()
 # Initialize Telegram bot
 application = Application.builder().token(TOKEN).build()
 
-# Dictionary to store pending captcha challenges
+# Dictionary to store pending verifications
 pending_captchas = {}
-
-# Function to generate a math captcha
-def generate_captcha():
-    num1 = random.randint(1, 10)
-    num2 = random.randint(1, 10)
-    correct_answer = num1 + num2
-    options = [correct_answer, correct_answer + random.randint(1, 3), correct_answer - random.randint(1, 3), correct_answer + random.randint(4, 6)]
-    random.shuffle(options)
-    return f"{num1} + {num2} = ?", correct_answer, options
-
-# Function to handle new members joining
-async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if update.message and update.message.new_chat_members:
-            for member in update.message.new_chat_members:
-                user_id = member.id
-                chat_id = update.message.chat.id
-                username = member.username or member.first_name
-
-                logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
-
-                # Restrict the new member (Mute them)
-                await context.bot.restrict_chat_member(
-                    chat_id, user_id,
-                    permissions=ChatPermissions(can_send_messages=False)
-                )
-
-                # Generate and store captcha
-                question, correct_answer, options = generate_captcha()
-                pending_captchas[user_id] = (correct_answer, chat_id)
-
-                # Create answer buttons
-                buttons = [
-                    [InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")]
-                    for opt in options
-                ]
-                reply_markup = InlineKeyboardMarkup(buttons)
-
-                # Send verification message
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"Welcome {username}! Please verify yourself by solving this captcha:\n\n{question}",
-                    reply_markup=reply_markup
-                )
-    except Exception as e:
-        logger.error(f"Error handling new member event: {e}")
-
-# Function to verify captcha
-async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        if not query:
-            return
-
-        _, user_id, selected_answer = query.data.split("_")
-        user_id = int(user_id)
-        selected_answer = int(selected_answer)
-
-        if user_id in pending_captchas:
-            correct_answer, chat_id = pending_captchas[user_id]
-
-            if selected_answer == correct_answer:
-                # Unrestrict the user
-                await context.bot.restrict_chat_member(
-                    chat_id, user_id,
-                    permissions=ChatPermissions(
-                        can_send_messages=True,
-                        can_send_media_messages=True,
-                        can_send_other_messages=True,
-                        can_add_web_page_previews=True
-                    )
-                )
-
-                await query.edit_message_text("✅ Verification successful! You can now participate in the chat.")
-                del pending_captchas[user_id]
-            else:
-                # Retry if incorrect
-                question, new_correct_answer, new_options = generate_captcha()
-                pending_captchas[user_id] = (new_correct_answer, chat_id)
-
-                new_buttons = [
-                    [InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")]
-                    for opt in new_options
-                ]
-                new_reply_markup = InlineKeyboardMarkup(new_buttons)
-
-                await query.edit_message_text(
-                    text=f"❌ Incorrect answer. Please try again:\n\n{question}",
-                    reply_markup=new_reply_markup
-                )
-    except Exception as e:
-        logger.error(f"Error handling captcha verification: {e}")
 
 # Function to handle text messages
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -154,10 +56,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if media_file.endswith('.mp3'):
                             await update.message.reply_audio(audio=media)
                         elif media_file.endswith('.mp4'):
-                            clip = VideoFileClip(media_file)
-                            width, height = clip.size
-                            await update.message.reply_video(video=media, width=width, height=height, supports_streaming=True)
-                            clip.close()
+                            await update.message.reply_video(video=media, supports_streaming=True)
                         elif media_file.endswith('.jpg'):
                             await update.message.reply_photo(photo=media)
                         elif media_file.endswith('.gif'):
@@ -167,12 +66,94 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error handling message: {e}")
         await update.message.reply_text("An error occurred while processing your request.")
 
-# Add handlers
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
-application.add_handler(CallbackQueryHandler(verify_captcha, pattern="^captcha_"))
 
-# Webhook endpoint for Telegram updates
+# Function to generate a math question captcha
+def generate_captcha():
+    num1 = random.randint(1, 10)
+    num2 = random.randint(1, 10)
+    correct_answer = num1 + num2
+    incorrect_answers = [correct_answer + 1, correct_answer - 1, correct_answer + 2]
+    options = [correct_answer] + incorrect_answers
+    random.shuffle(options)
+    
+    return f"What is {num1} + {num2}?", options, correct_answer
+
+# Function to handle new members joining
+async def welcome_and_restrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        for member in update.message.new_chat_members:
+            chat_id = update.message.chat.id
+            user_id = member.id
+            username = member.first_name
+
+            logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
+
+            # Restrict new member
+            await context.bot.restrict_chat_member(
+                chat_id=chat_id,
+                user_id=user_id,
+                permissions=ChatPermissions(can_send_messages=False)
+            )
+
+            # Generate captcha
+            question, options, correct_answer = generate_captcha()
+            pending_captchas[user_id] = correct_answer
+
+            # Create inline buttons
+            keyboard = [
+                [InlineKeyboardButton(str(option), callback_data=f"captcha_{user_id}_{option}")]
+                for option in options
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.message.reply_text(
+                f"Welcome {username}! Please solve this captcha to verify yourself:\n\n{question}",
+                reply_markup=reply_markup
+            )
+    except Exception as e:
+        logger.error(f"Error handling new member event: {e}")
+
+application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_and_restrict))
+
+# Function to verify captcha
+async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        _, user_id, answer = query.data.split("_")
+        user_id = int(user_id)
+        answer = int(answer)
+        chat_id = query.message.chat.id
+
+        if user_id not in pending_captchas:
+            await query.answer("Verification session expired.")
+            return
+
+        if answer == pending_captchas[user_id]:
+            await context.bot.restrict_chat_member(
+                chat_id=chat_id,
+                user_id=user_id,
+                permissions=ChatPermissions(
+                    can_send_messages=True,
+                    can_send_polls=True,
+                    can_send_photos=True,
+                    can_send_videos=True,
+                    can_send_voice_notes=True,
+                    can_send_video_notes=True,
+                    can_send_documents=True,
+                    can_add_web_page_previews=True
+                )
+            )
+            await query.message.edit_text("✅ Verification successful! You are now unrestricted.")
+            del pending_captchas[user_id]
+        else:
+            await query.answer("❌ Incorrect answer. Please try again.", show_alert=True)
+    except Exception as e:
+        logger.error(f"Error handling captcha verification: {e}")
+
+application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
+
+# Webhook endpoint to receive Telegram updates
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     try:
@@ -190,7 +171,7 @@ async def telegram_webhook(request: Request):
         logger.error(f"Error processing webhook update: {e}")
         return {"status": "error", "message": str(e)}
 
-# Startup event to set webhook
+# Startup event for setting webhook
 @app.on_event("startup")
 async def startup_event():
     try:
