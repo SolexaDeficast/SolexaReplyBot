@@ -168,7 +168,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if media_file.endswith('.mp3'):
                             await update.message.reply_audio(audio=media)
                         elif media_file.endswith('.mp4'):
-                            await update.message.reply_video(video=media, supports_streaming=True)
+                            await update.message.reply_video(
+                                video=media,
+                                supports_streaming=True,
+                                width=1280,  # Ensuring correct width
+                                height=720   # Ensuring correct height
+                            )
                         elif media_file.endswith('.jpg'):
                             await update.message.reply_photo(photo=media)
                         elif media_file.endswith('.gif'):
