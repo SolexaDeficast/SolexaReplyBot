@@ -56,53 +56,10 @@ keyword_responses = {
     "launch cat": "launchcat.gif"
 }
 
-# Function to generate a math captcha
-def generate_captcha():
-    num1 = random.randint(1, 10)
-    num2 = random.randint(1, 10)
-    correct_answer = num1 + num2
-
-    wrong_answers = set()
-    while len(wrong_answers) < 3:
-        wrong = random.randint(1, 20)
-        if wrong != correct_answer:
-            wrong_answers.add(wrong)
-
-    options = list(wrong_answers) + [correct_answer]
-    random.shuffle(options)
-
-    return f"What is {num1} + {num2}?", options, correct_answer
-
-# Function to handle new members
-async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        for member in update.message.new_chat_members:
-            chat_id = update.message.chat_id
-            user_id = member.id
-            username = member.first_name
-
-            logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
-
-            permissions = ChatPermissions(can_send_messages=False)
-            await context.bot.restrict_chat_member(chat_id, user_id, permissions)
-            logger.info(f"User {username} restricted in supergroup.")
-
-            question, options, correct_answer = generate_captcha()
-            captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id}
-
-            keyboard = [
-                [InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")]
-                for opt in options
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"Welcome {username}! Please verify yourself.\n\n{question}",
-                reply_markup=reply_markup
-            )
-    except Exception as e:
-        logger.error(f"Error handling new member event: {e}")
+# Function to check if a message contains an exact word match
+def contains_exact_word(text, word):
+    words = text.lower().split()
+    return word.lower() in words
 
 # Function to handle text messages and check against filters and media keywords
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,7 +70,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Check for media keyword responses
             for keyword, media_file in keyword_responses.items():
-                if keyword in message_text:
+                if contains_exact_word(message_text, keyword):
                     logger.info(f"Keyword '{keyword}' detected. Sending file: {media_file}")
 
                     # Check if the file exists
@@ -126,7 +83,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if media_file.endswith('.mp3'):
                             await update.message.reply_audio(audio=media)
                         elif media_file.endswith('.mp4'):
-                            await update.message.reply_video(video=media, supports_streaming=True)
+                            await update.message.reply_video(video=media, supports_streaming=True, width=720, height=1280)
                         elif media_file.endswith('.jpg'):
                             await update.message.reply_photo(photo=media)
                         elif media_file.endswith('.gif'):
@@ -136,7 +93,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Check for text filters
             if chat_id in filters_data:
                 for keyword, response in filters_data[chat_id].items():
-                    if keyword in message_text:
+                    if contains_exact_word(message_text, keyword):
                         await update.message.reply_text(response)
                         return  # Stop execution after sending a response
     except Exception as e:
@@ -144,7 +101,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Function to add a text filter
 async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
+    if len(context.args) < 2:
         await update.message.reply_text("Usage: /addsolexafilter <keyword> <response>")
         return
 
@@ -191,7 +148,6 @@ application.add_handler(CommandHandler("addsolexafilter", add_filter))
 application.add_handler(CommandHandler("listsolexafilter", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
