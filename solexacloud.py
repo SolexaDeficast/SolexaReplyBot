@@ -10,7 +10,7 @@ from telegram import (
 from telegram.ext import (
     Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler, CommandHandler
 )
-from moviepy.editor import VideoFileClip  # New import for video dimensions
+from moviepy.editor import VideoFileClip  # For video aspect ratios
 
 # Enable detailed logging
 logging.basicConfig(
@@ -119,6 +119,11 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(user_id)
         answer = int(answer)
 
+        # Check if the clicker is the new member
+        if query.from_user.id != user_id:
+            await query.answer("This CAPTCHA is only for the new member to answer!")
+            return
+
         if user_id not in captcha_attempts:
             await query.answer("This verification has expired.")
             return
@@ -151,7 +156,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del captcha_attempts[user_id]
                 logger.info(f"User {user_id} failed verification and was removed.")
             else:
-                await query.answer("❌ Incorrect answer. Please try again.")
+                await query.answer(f"❌ Incorrect answer. Attempts left: {3 - attempts}")
     except Exception as e:
         logger.error(f"Error handling captcha verification: {e}")
 
@@ -180,7 +185,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if media_file.endswith('.mp3'):
                             await update.message.reply_audio(audio=media)
                         elif media_file.endswith('.mp4'):
-                            # Get video dimensions dynamically
                             video = VideoFileClip(media_file)
                             width, height = video.size
                             video.close()
@@ -193,6 +197,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         elif media_file.endswith('.jpg'):
                             await update.message.reply_photo(photo=media)
                         elif media_file.endswith('.gif'):
+                            logger.info(f"Sending GIF: {media_file}")
                             await update.message.reply_animation(animation=media)
                     return  # Stop after first match
 
@@ -244,7 +249,7 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Filter '{keyword}' not found.")
 
 # Add the handlers to the application
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+application.add_handler(MessageHandler(filters.TEXT, handle_message))  # Changed to catch all text
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"captcha_\d+_\d+"))
 application.add_handler(CommandHandler("addsolexafilter", add_filter))
