@@ -61,109 +61,11 @@ keyword_responses = {
     "launch cat": "launchcat.gif"
 }
 
-# Function to generate a math captcha
-def generate_captcha():
-    num1 = random.randint(1, 10)
-    num2 = random.randint(1, 10)
-    correct_answer = num1 + num2
-    wrong_answers = set()
-    while len(wrong_answers) < 3:
-        wrong = random.randint(1, 20)
-        if wrong != correct_answer:
-            wrong_answers.add(wrong)
-    options = list(wrong_answers) + [correct_answer]
-    random.shuffle(options)
-    return f"What is {num1} + {num2}?", options, correct_answer
-
-# Function to handle new members
-async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        for member in update.message.new_chat_members:
-            chat_id = update.message.chat_id
-            user_id = member.id
-            username = member.first_name
-
-            logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
-
-            permissions = ChatPermissions(can_send_messages=False)
-            await context.bot.restrict_chat_member(chat_id, user_id, permissions)
-            logger.info(f"User {username} restricted in supergroup.")
-
-            question, options, correct_answer = generate_captcha()
-            captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id}
-
-            keyboard = [
-                [InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")]
-                for opt in options
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"Welcome {username}! Please verify yourself.\n\n{question}",
-                reply_markup=reply_markup
-            )
-    except Exception as e:
-        logger.error(f"Error handling new member event: {e}")
-
-# Function to verify captcha response
-async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        data = query.data.split("_")
-
-        if len(data) != 3:
-            return
-
-        _, user_id, answer = data
-        user_id = int(user_id)
-        answer = int(answer)
-
-        if query.from_user.id != user_id:
-            await query.answer("This CAPTCHA is only for the new member to answer!")
-            return
-
-        if user_id not in captcha_attempts:
-            await query.answer("This verification has expired.")
-            return
-
-        correct_answer = captcha_attempts[user_id]["answer"]
-        chat_id = captcha_attempts[user_id]["chat_id"]
-        attempts = captcha_attempts[user_id]["attempts"]
-
-        if answer == correct_answer:
-            permissions = ChatPermissions(
-                can_send_messages=True,
-                can_send_photos=True,
-                can_send_videos=True,
-                can_send_other_messages=True,
-                can_send_polls=True,
-                can_add_web_page_previews=True
-            )
-            await context.bot.restrict_chat_member(chat_id, user_id, permissions)
-            await query.message.edit_text("✅ Verification successful! You may now participate in the chat.")
-            del captcha_attempts[user_id]
-            logger.info(f"User {user_id} successfully verified and unrestricted.")
-        else:
-            attempts += 1
-            captcha_attempts[user_id]["attempts"] = attempts
-
-            if attempts >= 3:
-                await context.bot.ban_chat_member(chat_id, user_id)
-                await context.bot.unban_chat_member(chat_id, user_id)
-                await query.message.edit_text("❌ You failed verification 3 times and have been removed from the group.")
-                del captcha_attempts[user_id]
-                logger.info(f"User {user_id} failed verification and was removed.")
-            else:
-                await query.answer(f"❌ Incorrect answer. Attempts left: {3 - attempts}")
-    except Exception as e:
-        logger.error(f"Error handling captcha verification: {e}")
-
 # Function to check if a message contains a keyword
 def contains_keyword(text, keyword):
     text_lower = text.lower()
     keyword_lower = keyword.lower()
-    return keyword_lower in text_lower.split()
+    return keyword_lower in text_lower
 
 # Function to handle text messages
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -174,7 +76,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_text = raw_message_text.lstrip("/").lower()
             logger.info(f"Processing message: '{raw_message_text}' -> '{message_text}'")
 
-            # Check for text filters
+            # **Check for text filters first**
             if chat_id in filters_data:
                 for keyword, response in filters_data[chat_id].items():
                     if contains_keyword(message_text, keyword):
@@ -182,14 +84,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.message.reply_text(response)
                         return  # Stop after first match
 
-            # Check for media keyword responses
+            # **Check for media keyword responses**
             for keyword, media_file in keyword_responses.items():
                 if contains_keyword(message_text, keyword):
                     logger.info(f"Media keyword '{keyword}' detected. Sending file: {media_file}")
+                    
                     if not os.path.exists(media_file):
                         logger.error(f"File not found: {media_file}")
-                        await update.message.reply_text(f"Sorry, the file '{media_file}' is missing.")
+                        await update.message.reply_text(f"❌ Sorry, the file '{media_file}' is missing.")
                         return
+
                     with open(media_file, 'rb') as media:
                         if media_file.endswith('.mp3'):
                             await update.message.reply_audio(audio=media)
@@ -208,32 +112,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         elif media_file.endswith('.gif'):
                             logger.info(f"Attempting to send GIF: {media_file}")
                             await update.message.reply_animation(animation=media)
-                            logger.info(f"GIF sent: {media_file}")
+                            logger.info(f"GIF sent successfully: {media_file}")
+
                     return  # Stop after first match
+
             logger.info(f"No match found for message: '{message_text}'")
+
     except Exception as e:
         logger.error(f"Error handling message: {e}")
-        await update.message.reply_text("An error occurred while processing your request.")
-
-# Function to handle slashed filter keywords (e.g., /CA)
-async def handle_filter_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        chat_id = str(update.message.chat_id)
-        command_text = update.message.text.lstrip("/").lower()
-        logger.info(f"Processing command: '{update.message.text}' -> '{command_text}'")
-
-        if chat_id in filters_data:
-            for keyword, response in filters_data[chat_id].items():
-                if command_text == keyword:
-                    logger.info(f"Filter command triggered: '{keyword}' -> '{response}'")
-                    await update.message.reply_text(response)
-                    return
-    except Exception as e:
-        logger.error(f"Error handling filter command: {e}")
+        await update.message.reply_text("⚠️ An error occurred while processing your request.")
 
 # Function to add a text filter
 async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Received /addsolexafilter command: {update.message.text}")
     try:
         if len(context.args) < 2:
             await update.message.reply_text("Usage: /addsolexafilter <keyword> <response>")
@@ -241,19 +131,21 @@ async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = str(update.message.chat_id)
         keyword = context.args[0].lower()
         response = " ".join(context.args[1:])
+
         if chat_id not in filters_data:
             filters_data[chat_id] = {}
+
         filters_data[chat_id][keyword] = response
         save_filters(filters_data)
+
         await update.message.reply_text(f"✅ Filter added: '{keyword}' → '{response}'")
         logger.info(f"Filter added for chat {chat_id}: '{keyword}' -> '{response}'")
     except Exception as e:
         logger.error(f"Error in add_filter: {e}")
-        await update.message.reply_text("Error adding filter!")
+        await update.message.reply_text("⚠️ Error adding filter!")
 
 # Function to list all filters
 async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Received /listsolexafilter command: {update.message.text}")
     try:
         chat_id = str(update.message.chat_id)
         if chat_id not in filters_data or not filters_data[chat_id]:
@@ -263,17 +155,17 @@ async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📜 Active Filters:\n{filter_list}")
     except Exception as e:
         logger.error(f"Error in list_filters: {e}")
-        await update.message.reply_text("Error listing filters!")
+        await update.message.reply_text("⚠️ Error listing filters!")
 
 # Function to remove a filter
 async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Received /removesolexafilter command: {update.message.text}")
     try:
         if not context.args:
             await update.message.reply_text("Usage: /removesolexafilter <keyword>")
             return
         chat_id = str(update.message.chat_id)
         keyword = context.args[0].lower()
+
         if chat_id in filters_data and keyword in filters_data[chat_id]:
             del filters_data[chat_id][keyword]
             save_filters(filters_data)
@@ -282,52 +174,11 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Filter '{keyword}' not found.")
     except Exception as e:
         logger.error(f"Error in remove_filter: {e}")
-        await update.message.reply_text("Error removing filter!")
+        await update.message.reply_text("⚠️ Error removing filter!")
 
-# Test command to ensure commands work
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Received /start command")
-    await update.message.reply_text("Bot is alive! Use /addsolexafilter to set filters.")
-
-# Add the handlers to the application
-application.add_handler(CommandHandler("start", start))
+# Register handlers
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-application.add_handler(MessageHandler(filters.COMMAND, handle_filter_command))
-application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
-application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"captcha_\d+_\d+"))
 application.add_handler(CommandHandler("addsolexafilter", add_filter))
 application.add_handler(CommandHandler("listsolexafilter", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 
-# Webhook endpoint to receive Telegram updates
-@app.post("/telegram")
-async def telegram_webhook(request: Request):
-    try:
-        data = await request.json()
-        update = Update.de_json(data, application.bot)
-        logger.info(f"Received update: {update}")
-        if not application.running:
-            logger.warning("Application is not running. Initializing now...")
-            await application.initialize()
-            await application.start()
-        await application.process_update(update)
-        return {"status": "ok"}
-    except Exception as e:
-        logger.error(f"Error processing webhook update: {e}")
-        return {"status": "error", "message": str(e)}
-
-# Startup event for setting webhook
-@app.on_event("startup")
-async def startup_event():
-    try:
-        await application.initialize()
-        await application.start()
-        await application.bot.delete_webhook()
-        await application.bot.set_webhook(WEBHOOK_URL)
-        logger.info(f"Webhook set to: {WEBHOOK_URL}")
-    except Exception as e:
-        logger.error(f"Error starting bot: {e}")
-
-# Ensure proper port binding for Render
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=10000)
