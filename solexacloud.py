@@ -108,6 +108,11 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(user_id)
         answer = int(answer)
 
+        # Ensure only the restricted user can answer
+        if query.from_user.id != user_id:
+            await query.answer("You cannot answer this verification question.", show_alert=True)
+            return
+
         if user_id not in captcha_attempts:
             await query.answer("This verification has expired.")
             return
@@ -145,43 +150,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Incorrect answer. Please try again.")
     except Exception as e:
         logger.error(f"Error handling captcha verification: {e}")
-
-# Function to handle text messages
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if update.message:
-            message_text = update.message.text.lower()
-
-            # Check for keywords
-            for keyword, media_file in keyword_responses.items():
-                if keyword in message_text:
-                    logger.info(f"Keyword '{keyword}' detected. Sending file: {media_file}")
-
-                    # Check if the file exists
-                    if not os.path.exists(media_file):
-                        logger.error(f"File not found: {media_file}")
-                        await update.message.reply_text(f"Sorry, the file '{media_file}' is missing.")
-                        return
-
-                    # Send appropriate media
-                    with open(media_file, 'rb') as media:
-                        if media_file.endswith('.mp3'):
-                            await update.message.reply_audio(audio=media)
-                        elif media_file.endswith('.mp4'):
-                            await update.message.reply_video(
-                                video=media,
-                                supports_streaming=True,
-                                width=1280,  # Ensuring correct width
-                                height=720   # Ensuring correct height
-                            )
-                        elif media_file.endswith('.jpg'):
-                            await update.message.reply_photo(photo=media)
-                        elif media_file.endswith('.gif'):
-                            await update.message.reply_animation(animation=media)
-                    break  # Stop after first match
-    except Exception as e:
-        logger.error(f"Error handling message: {e}")
-        await update.message.reply_text("An error occurred while processing your request.")
 
 # Add the handlers to the application
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
