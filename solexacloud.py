@@ -158,7 +158,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if the message matches any filters using exact word matching or command-like format
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
-                # Match exact word or command-like format (including when it's the only word or first word)
+                # Match exact word or command-like format (including when it's the first word)
                 if re.search(rf"(?:^|\s){re.escape('/' + keyword)}(?:\s|$)|\b{re.escape(keyword)}\b", message_text):
                     await update.message.reply_text(response)
                     return
@@ -182,6 +182,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 break
     except Exception as e:
         logger.error(f"Error handling message: {e}")
+
+# Function to handle commands as filters
+async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        message_text = update.message.text.lower()
+        chat_id = update.message.chat_id
+
+        # Check if the message matches any filters (even if it starts with /)
+        if chat_id in filters_dict:
+            for keyword, response in filters_dict[chat_id].items():
+                # Match command-like format at the start of the message
+                if re.match(rf"^{re.escape('/' + keyword)}$", message_text):
+                    await update.message.reply_text(response)
+                    return
+    except Exception as e:
+        logger.error(f"Error handling command as filter: {e}")
 
 # Function to handle the /help command
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -331,8 +347,17 @@ application.add_handler(CommandHandler("kick", kick_user))
 application.add_handler(CommandHandler("addsolexafilter", add_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
-application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
+
+# Add a custom handler for commands that act as filters
+application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
+
+# Add a handler for regular text messages
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+# Add a handler for new chat members
+application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
+
+# Add a handler for captcha verification
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"captcha_\d+_\d+"))
 
 # Webhook handler
