@@ -158,7 +158,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if the message matches any filters using exact word matching or command-like format
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
-                # Match exact word or command-like format (including when it's the only word)
+                # Match exact word or command-like format (including when it's the only word or first word)
                 if re.search(rf"(?:^|\s){re.escape('/' + keyword)}(?:\s|$)|\b{re.escape(keyword)}\b", message_text):
                     await update.message.reply_text(response)
                     return
