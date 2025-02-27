@@ -50,7 +50,7 @@ app = FastAPI()
 # Initialize Telegram bot
 application = Application.builder().token(TOKEN).build()
 
-# Define the keywords and corresponding media files
+# Define the keywords and corresponding media files (unchanged paths)
 keyword_responses = {
     "audio": "test.mp3",
     "secret": "secret.mp3",
