@@ -159,10 +159,11 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error handling captcha verification: {e}")
 
-# Function to check if a message contains an exact word match
-def contains_exact_word(text, word):
-    words = text.lower().split()
-    return word.lower() in words
+# Function to check if a message contains a keyword
+def contains_keyword(text, keyword):
+    text_lower = text.lower()
+    keyword_lower = keyword.lower()
+    return keyword_lower in text_lower.split()
 
 # Function to handle text messages
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -176,14 +177,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Check for text filters
             if chat_id in filters_data:
                 for keyword, response in filters_data[chat_id].items():
-                    if contains_exact_word(message_text, keyword):
+                    if contains_keyword(message_text, keyword):
                         logger.info(f"Filter triggered: '{keyword}' -> '{response}'")
                         await update.message.reply_text(response)
                         return  # Stop after first match
 
             # Check for media keyword responses
             for keyword, media_file in keyword_responses.items():
-                if contains_exact_word(message_text, keyword):
+                if contains_keyword(message_text, keyword):
                     logger.info(f"Media keyword '{keyword}' detected. Sending file: {media_file}")
                     if not os.path.exists(media_file):
                         logger.error(f"File not found: {media_file}")
@@ -209,6 +210,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await update.message.reply_animation(animation=media)
                             logger.info(f"GIF sent: {media_file}")
                     return  # Stop after first match
+            logger.info(f"No match found for message: '{message_text}'")
     except Exception as e:
         logger.error(f"Error handling message: {e}")
         await update.message.reply_text("An error occurred while processing your request.")
@@ -217,12 +219,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_filter_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chat_id = str(update.message.chat_id)
-        command_text = update.message.text.lstrip("/").lower()  # Remove slash and lowercase
+        command_text = update.message.text.lstrip("/").lower()
         logger.info(f"Processing command: '{update.message.text}' -> '{command_text}'")
 
         if chat_id in filters_data:
             for keyword, response in filters_data[chat_id].items():
-                if command_text == keyword:  # Exact match for command
+                if command_text == keyword:
                     logger.info(f"Filter command triggered: '{keyword}' -> '{response}'")
                     await update.message.reply_text(response)
                     return
@@ -232,43 +234,55 @@ async def handle_filter_command(update: Update, context: ContextTypes.DEFAULT_TY
 # Function to add a text filter
 async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Received /addsolexafilter command: {update.message.text}")
-    if len(context.args) < 2:
-        await update.message.reply_text("Usage: /addsolexafilter <keyword> <response>")
-        return
-    chat_id = str(update.message.chat_id)
-    keyword = context.args[0].lower()
-    response = " ".join(context.args[1:])
-    if chat_id not in filters_data:
-        filters_data[chat_id] = {}
-    filters_data[chat_id][keyword] = response
-    save_filters(filters_data)
-    await update.message.reply_text(f"✅ Filter added: '{keyword}' → '{response}'")
-    logger.info(f"Filter added for chat {chat_id}: '{keyword}' -> '{response}'")
+    try:
+        if len(context.args) < 2:
+            await update.message.reply_text("Usage: /addsolexafilter <keyword> <response>")
+            return
+        chat_id = str(update.message.chat_id)
+        keyword = context.args[0].lower()
+        response = " ".join(context.args[1:])
+        if chat_id not in filters_data:
+            filters_data[chat_id] = {}
+        filters_data[chat_id][keyword] = response
+        save_filters(filters_data)
+        await update.message.reply_text(f"✅ Filter added: '{keyword}' → '{response}'")
+        logger.info(f"Filter added for chat {chat_id}: '{keyword}' -> '{response}'")
+    except Exception as e:
+        logger.error(f"Error in add_filter: {e}")
+        await update.message.reply_text("Error adding filter!")
 
 # Function to list all filters
 async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Received /listsolexafilter command: {update.message.text}")
-    chat_id = str(update.message.chat_id)
-    if chat_id not in filters_data or not filters_data[chat_id]:
-        await update.message.reply_text("No filters have been added yet.")
-        return
-    filter_list = "\n".join([f"{key} → {value}" for key, value in filters_data[chat_id].items()])
-    await update.message.reply_text(f"📜 Active Filters:\n{filter_list}")
+    try:
+        chat_id = str(update.message.chat_id)
+        if chat_id not in filters_data or not filters_data[chat_id]:
+            await update.message.reply_text("No filters have been added yet.")
+            return
+        filter_list = "\n".join([f"{key} → {value}" for key, value in filters_data[chat_id].items()])
+        await update.message.reply_text(f"📜 Active Filters:\n{filter_list}")
+    except Exception as e:
+        logger.error(f"Error in list_filters: {e}")
+        await update.message.reply_text("Error listing filters!")
 
 # Function to remove a filter
 async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Received /removesolexafilter command: {update.message.text}")
-    if not context.args:
-        await update.message.reply_text("Usage: /removesolexafilter <keyword>")
-        return
-    chat_id = str(update.message.chat_id)
-    keyword = context.args[0].lower()
-    if chat_id in filters_data and keyword in filters_data[chat_id]:
-        del filters_data[chat_id][keyword]
-        save_filters(filters_data)
-        await update.message.reply_text(f"🗑️ Filter '{keyword}' removed.")
-    else:
-        await update.message.reply_text(f"❌ Filter '{keyword}' not found.")
+    try:
+        if not context.args:
+            await update.message.reply_text("Usage: /removesolexafilter <keyword>")
+            return
+        chat_id = str(update.message.chat_id)
+        keyword = context.args[0].lower()
+        if chat_id in filters_data and keyword in filters_data[chat_id]:
+            del filters_data[chat_id][keyword]
+            save_filters(filters_data)
+            await update.message.reply_text(f"🗑️ Filter '{keyword}' removed.")
+        else:
+            await update.message.reply_text(f"❌ Filter '{keyword}' not found.")
+    except Exception as e:
+        logger.error(f"Error in remove_filter: {e}")
+        await update.message.reply_text("Error removing filter!")
 
 # Test command to ensure commands work
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -276,9 +290,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot is alive! Use /addsolexafilter to set filters.")
 
 # Add the handlers to the application
-application.add_handler(CommandHandler("start", start))  # Test command
+application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-application.add_handler(MessageHandler(filters.COMMAND, handle_filter_command))  # Catch /CA
+application.add_handler(MessageHandler(filters.COMMAND, handle_filter_command))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"captcha_\d+_\d+"))
 application.add_handler(CommandHandler("addsolexafilter", add_filter))
@@ -291,6 +305,7 @@ async def telegram_webhook(request: Request):
     try:
         data = await request.json()
         update = Update.de_json(data, application.bot)
+        logger.info(f"Received update: {update}")
         if not application.running:
             logger.warning("Application is not running. Initializing now...")
             await application.initialize()
