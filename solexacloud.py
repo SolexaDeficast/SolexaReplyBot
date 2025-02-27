@@ -117,13 +117,15 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         attempts = captcha_attempts[target_user_id]["attempts"]
 
         if answer == correct_answer:
+            # Fully restore permissions, including reading chat history
             permissions = ChatPermissions(
                 can_send_messages=True,
                 can_send_photos=True,
                 can_send_videos=True,
                 can_send_other_messages=True,
                 can_send_polls=True,
-                can_add_web_page_previews=True
+                can_add_web_page_previews=True,
+                can_read_all_group_messages=True  # Ensure access to full chat history
             )
             await context.bot.restrict_chat_member(chat_id, target_user_id, permissions)
             await query.message.edit_text("✅ Verification successful! You may now participate in the chat.")
@@ -148,11 +150,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_text = update.message.text.lower()
         chat_id = update.message.chat_id
 
-        # Check if the message matches any filters using exact word matching
+        # Check if the message matches any filters using exact word matching or command-like format
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
                 # Match exact word or command-like format
-                if re.fullmatch(rf"\b{re.escape(keyword)}\b", message_text) or message_text.startswith(f"/{keyword}"):
+                if re.fullmatch(rf"\b{re.escape(keyword)}\b", message_text) or re.fullmatch(rf"/{re.escape(keyword)}", message_text):
                     await update.message.reply_text(response)
                     return
 
