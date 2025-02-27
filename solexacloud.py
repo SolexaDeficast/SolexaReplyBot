@@ -204,7 +204,7 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # Resolve user ID from mention or direct ID
                 if target_user.startswith("@"):
-                    target_user = target_user[1:]
+                    target_user = target_user[1:]  # Remove the '@' symbol
                     try:
                         user = await context.bot.get_chat_member(chat_id, target_user)
                         user_id = user.user.id
@@ -214,6 +214,14 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     user_id = int(target_user)
 
+                # Ensure the user exists in the chat
+                try:
+                    await context.bot.get_chat_member(chat_id, user_id)
+                except Exception as e:
+                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
+                    return
+
+                # Ban the user
                 await context.bot.ban_chat_member(chat_id, user_id)
                 await update.message.reply_text(f"User {target_user} has been banned.")
             except (IndexError, ValueError):
@@ -233,7 +241,7 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # Resolve user ID from mention or direct ID
                 if target_user.startswith("@"):
-                    target_user = target_user[1:]
+                    target_user = target_user[1:]  # Remove the '@' symbol
                     try:
                         user = await context.bot.get_chat_member(chat_id, target_user)
                         user_id = user.user.id
@@ -243,6 +251,14 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     user_id = int(target_user)
 
+                # Ensure the user exists in the chat
+                try:
+                    await context.bot.get_chat_member(chat_id, user_id)
+                except Exception as e:
+                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
+                    return
+
+                # Kick the user
                 await context.bot.unban_chat_member(chat_id, user_id)
                 await update.message.reply_text(f"User {target_user} has been kicked.")
             except (IndexError, ValueError):
