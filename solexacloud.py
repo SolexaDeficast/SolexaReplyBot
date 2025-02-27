@@ -117,16 +117,21 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         attempts = captcha_attempts[target_user_id]["attempts"]
 
         if answer == correct_answer:
-            # Fully restore permissions, including reading chat history
+            # Fully restore permissions
             permissions = ChatPermissions(
                 can_send_messages=True,
                 can_send_photos=True,
                 can_send_videos=True,
                 can_send_other_messages=True,
                 can_send_polls=True,
-                can_add_web_page_previews=True,
-                can_read_all_group_messages=True  # Ensure access to full chat history
+                can_add_web_page_previews=True
             )
+            try:
+                # Attempt to enable full chat history access
+                permissions.can_read_all_group_messages = True
+            except AttributeError:
+                logger.warning("The 'can_read_all_group_messages' attribute is not supported in this version.")
+
             await context.bot.restrict_chat_member(chat_id, target_user_id, permissions)
             await query.message.edit_text("✅ Verification successful! You may now participate in the chat.")
             del captcha_attempts[target_user_id]
@@ -200,8 +205,12 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Resolve user ID from mention or direct ID
                 if target_user.startswith("@"):
                     target_user = target_user[1:]
-                    user = await context.bot.get_chat_member(chat_id, target_user)
-                    user_id = user.user.id
+                    try:
+                        user = await context.bot.get_chat_member(chat_id, target_user)
+                        user_id = user.user.id
+                    except Exception as e:
+                        await update.message.reply_text(f"Error: {e}. User @{target_user} may not exist in this chat.")
+                        return
                 else:
                     user_id = int(target_user)
 
@@ -225,8 +234,12 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Resolve user ID from mention or direct ID
                 if target_user.startswith("@"):
                     target_user = target_user[1:]
-                    user = await context.bot.get_chat_member(chat_id, target_user)
-                    user_id = user.user.id
+                    try:
+                        user = await context.bot.get_chat_member(chat_id, target_user)
+                        user_id = user.user.id
+                    except Exception as e:
+                        await update.message.reply_text(f"Error: {e}. User @{target_user} may not exist in this chat.")
+                        return
                 else:
                     user_id = int(target_user)
 
