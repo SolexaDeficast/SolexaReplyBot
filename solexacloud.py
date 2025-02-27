@@ -5,7 +5,7 @@ import re  # Import regex for exact word matching
 from fastapi import FastAPI, Request
 import uvicorn
 from telegram import (
-    Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
+    Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, User
 )
 from telegram.ext import (
     Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler, CommandHandler
@@ -154,7 +154,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
                 # Match exact word or command-like format
-                if re.fullmatch(rf"\b{re.escape(keyword)}\b", message_text) or re.fullmatch(rf"/{re.escape(keyword)}", message_text):
+                if re.search(rf"\b{re.escape(keyword)}\b", message_text) or re.fullmatch(rf"/{re.escape(keyword)}", message_text):
                     await update.message.reply_text(response)
                     return
 
@@ -184,22 +184,56 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Welcome to the bot! Here are some available features:\n\n"
         "- Type keywords like 'audio', 'video', 'profits', etc., to get corresponding media.\n"
         "- New members must solve a captcha to join the chat.\n"
-        "- Admins can use commands like /ban, /addsolexafilter, /listsolexafilters, /removesolexafilter to manage the group.\n"
+        "- Admins can use commands like /ban, /kick, /addsolexafilter, /listsolexafilters, /removesolexafilter to manage the group.\n"
         "- For more information, contact the bot administrator."
     )
     await update.message.reply_text(help_text)
 
-# Function to handle the /ban command (admin only)
+# Function to ban a user (admin only)
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.chat.type == "private":  # Ensure this is a group chat
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
-                user_id = int(context.args[0])  # Get the user ID from the command argument
+                target_user = context.args[0]
                 chat_id = update.message.chat_id
+
+                # Resolve user ID from mention or direct ID
+                if target_user.startswith("@"):
+                    target_user = target_user[1:]
+                    user = await context.bot.get_chat_member(chat_id, target_user)
+                    user_id = user.user.id
+                else:
+                    user_id = int(target_user)
+
                 await context.bot.ban_chat_member(chat_id, user_id)
-                await update.message.reply_text(f"User {user_id} has been banned.")
+                await update.message.reply_text(f"User {target_user} has been banned.")
             except (IndexError, ValueError):
-                await update.message.reply_text("Usage: /ban <user_id>")
+                await update.message.reply_text("Usage: /ban <username> or /ban <user_id>")
+        else:
+            await update.message.reply_text("You do not have permission to use this command.")
+    else:
+        await update.message.reply_text("This command can only be used in group chats.")
+
+# Function to kick a user (admin only)
+async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.chat.type == "private":  # Ensure this is a group chat
+        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+            try:
+                target_user = context.args[0]
+                chat_id = update.message.chat_id
+
+                # Resolve user ID from mention or direct ID
+                if target_user.startswith("@"):
+                    target_user = target_user[1:]
+                    user = await context.bot.get_chat_member(chat_id, target_user)
+                    user_id = user.user.id
+                else:
+                    user_id = int(target_user)
+
+                await context.bot.unban_chat_member(chat_id, user_id)
+                await update.message.reply_text(f"User {target_user} has been kicked.")
+            except (IndexError, ValueError):
+                await update.message.reply_text("Usage: /kick <username> or /kick <user_id>")
         else:
             await update.message.reply_text("You do not have permission to use this command.")
     else:
@@ -264,6 +298,7 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Add handlers for all commands and messages
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("ban", ban_user))
+application.add_handler(CommandHandler("kick", kick_user))
 application.add_handler(CommandHandler("addsolexafilter", add_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
