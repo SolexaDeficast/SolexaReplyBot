@@ -119,7 +119,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(user_id)
         answer = int(answer)
 
-        # Check if the clicker is the new member
         if query.from_user.id != user_id:
             await query.answer("This CAPTCHA is only for the new member to answer!")
             return
@@ -172,11 +171,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id = str(update.message.chat_id)
             raw_message_text = update.message.text
             message_text = raw_message_text.lstrip("/").lower()
+            logger.info(f"Processing message: '{raw_message_text}' -> '{message_text}'")
+
+            # Check for text filters
+            if chat_id in filters_data:
+                for keyword, response in filters_data[chat_id].items():
+                    if contains_exact_word(message_text, keyword):
+                        logger.info(f"Filter triggered: '{keyword}' -> '{response}'")
+                        await update.message.reply_text(response)
+                        return  # Stop after first match
 
             # Check for media keyword responses
             for keyword, media_file in keyword_responses.items():
                 if contains_exact_word(message_text, keyword):
-                    logger.info(f"Keyword '{keyword}' detected. Sending file: {media_file}")
+                    logger.info(f"Media keyword '{keyword}' detected. Sending file: {media_file}")
                     if not os.path.exists(media_file):
                         logger.error(f"File not found: {media_file}")
                         await update.message.reply_text(f"Sorry, the file '{media_file}' is missing.")
@@ -197,22 +205,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         elif media_file.endswith('.jpg'):
                             await update.message.reply_photo(photo=media)
                         elif media_file.endswith('.gif'):
-                            logger.info(f"Sending GIF: {media_file}")
+                            logger.info(f"Attempting to send GIF: {media_file}")
                             await update.message.reply_animation(animation=media)
+                            logger.info(f"GIF sent: {media_file}")
                     return  # Stop after first match
-
-            # Check for text filters
-            if chat_id in filters_data:
-                for keyword, response in filters_data[chat_id].items():
-                    if contains_exact_word(message_text, keyword):
-                        await update.message.reply_text(response)
-                        return  # Stop after first match
     except Exception as e:
         logger.error(f"Error handling message: {e}")
         await update.message.reply_text("An error occurred while processing your request.")
 
+# Function to handle slashed filter keywords (e.g., /CA)
+async def handle_filter_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        chat_id = str(update.message.chat_id)
+        command_text = update.message.text.lstrip("/").lower()  # Remove slash and lowercase
+        logger.info(f"Processing command: '{update.message.text}' -> '{command_text}'")
+
+        if chat_id in filters_data:
+            for keyword, response in filters_data[chat_id].items():
+                if command_text == keyword:  # Exact match for command
+                    logger.info(f"Filter command triggered: '{keyword}' -> '{response}'")
+                    await update.message.reply_text(response)
+                    return
+    except Exception as e:
+        logger.error(f"Error handling filter command: {e}")
+
 # Function to add a text filter
 async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Received /addsolexafilter command: {update.message.text}")
     if len(context.args) < 2:
         await update.message.reply_text("Usage: /addsolexafilter <keyword> <response>")
         return
@@ -224,9 +243,11 @@ async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filters_data[chat_id][keyword] = response
     save_filters(filters_data)
     await update.message.reply_text(f"✅ Filter added: '{keyword}' → '{response}'")
+    logger.info(f"Filter added for chat {chat_id}: '{keyword}' -> '{response}'")
 
 # Function to list all filters
 async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Received /listsolexafilter command: {update.message.text}")
     chat_id = str(update.message.chat_id)
     if chat_id not in filters_data or not filters_data[chat_id]:
         await update.message.reply_text("No filters have been added yet.")
@@ -236,6 +257,7 @@ async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Function to remove a filter
 async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Received /removesolexafilter command: {update.message.text}")
     if not context.args:
         await update.message.reply_text("Usage: /removesolexafilter <keyword>")
         return
@@ -248,8 +270,15 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"❌ Filter '{keyword}' not found.")
 
+# Test command to ensure commands work
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Received /start command")
+    await update.message.reply_text("Bot is alive! Use /addsolexafilter to set filters.")
+
 # Add the handlers to the application
-application.add_handler(MessageHandler(filters.TEXT, handle_message))  # Changed to catch all text
+application.add_handler(CommandHandler("start", start))  # Test command
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+application.add_handler(MessageHandler(filters.COMMAND, handle_filter_command))  # Catch /CA
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"captcha_\d+_\d+"))
 application.add_handler(CommandHandler("addsolexafilter", add_filter))
