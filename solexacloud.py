@@ -1,6 +1,7 @@
 import os
 import logging
 import random
+import re  # Import regex for exact word matching
 from fastapi import FastAPI, Request
 import uvicorn
 from telegram import (
@@ -147,10 +148,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_text = update.message.text.lower()
         chat_id = update.message.chat_id
 
-        # Check if the message matches any filters
+        # Check if the message matches any filters using exact word matching
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
-                if keyword in message_text:
+                # Match exact word or command-like format
+                if re.fullmatch(rf"\b{re.escape(keyword)}\b", message_text) or message_text.startswith(f"/{keyword}"):
                     await update.message.reply_text(response)
                     return
 
