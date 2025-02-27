@@ -10,26 +10,18 @@ from telegram.ext import (
     Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 )
 
-# Enable detailed logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Read environment variables
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"
 
-# Dictionary to track users' captcha attempts
 captcha_attempts = {}
-
-# Initialize FastAPI
 app = FastAPI()
-
-# Initialize Telegram bot
 application = Application.builder().token(TOKEN).build()
 
-# Define the keywords and corresponding media files
 keyword_responses = {
     "audio": "test.mp3",
     "secret": "secret.mp3",
@@ -40,25 +32,19 @@ keyword_responses = {
     "launch cat": "launchcat.gif"
 }
 
-# Function to generate a math captcha
 def generate_captcha():
     num1 = random.randint(1, 10)
     num2 = random.randint(1, 10)
     correct_answer = num1 + num2
-
-    # Generate incorrect answers
     wrong_answers = set()
     while len(wrong_answers) < 3:
         wrong = random.randint(1, 20)
         if wrong != correct_answer:
             wrong_answers.add(wrong)
-
     options = list(wrong_answers) + [correct_answer]
     random.shuffle(options)
-
     return f"What is {num1} + {num2}?", options, correct_answer
 
-# Function to handle new members
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         for member in update.message.new_chat_members:
@@ -68,25 +54,21 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
             logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
 
-            # Restrict the new member's permissions
             permissions = ChatPermissions(
                 can_send_messages=False
             )
             await context.bot.restrict_chat_member(chat_id, user_id, permissions)
             logger.info(f"User {username} restricted in supergroup.")
 
-            # Generate captcha question
             question, options, correct_answer = generate_captcha()
             captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id}
 
-            # Create inline keyboard
             keyboard = [
                 [InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")]
                 for opt in options
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            # Send captcha message
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=f"Welcome {username}! Please verify yourself.\n\n{question}",
@@ -95,7 +77,6 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.error(f"Error handling new member event: {e}")
 
-# Function to verify captcha response
 async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -108,9 +89,8 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(user_id)
         answer = int(answer)
 
-        # Ensure only the restricted user can answer
         if query.from_user.id != user_id:
-            await query.answer("You cannot answer this verification question.", show_alert=True)
+            await query.answer("You are not authorized to answer this CAPTCHA.", show_alert=True)
             return
 
         if user_id not in captcha_attempts:
@@ -122,7 +102,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         attempts = captcha_attempts[user_id]["attempts"]
 
         if answer == correct_answer:
-            # Grant full permissions including GIFs and stickers
             permissions = ChatPermissions(
                 can_send_messages=True,
                 can_send_photos=True,
@@ -140,9 +119,8 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             captcha_attempts[user_id]["attempts"] = attempts
 
             if attempts >= 3:
-                # Remove the user from the group
                 await context.bot.ban_chat_member(chat_id, user_id)
-                await context.bot.unban_chat_member(chat_id, user_id)  # Just removing, not banning
+                await context.bot.unban_chat_member(chat_id, user_id)
                 await query.message.edit_text("❌ You failed verification 3 times and have been removed from the group.")
                 del captcha_attempts[user_id]
                 logger.info(f"User {user_id} failed verification and was removed.")
@@ -151,12 +129,10 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error handling captcha verification: {e}")
 
-# Add the handlers to the application
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"captcha_\d+_\d+"))
 
-# Webhook endpoint to receive Telegram updates
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     try:
@@ -174,7 +150,6 @@ async def telegram_webhook(request: Request):
         logger.error(f"Error processing webhook update: {e}")
         return {"status": "error", "message": str(e)}
 
-# Startup event for setting webhook
 @app.on_event("startup")
 async def startup_event():
     try:
@@ -186,6 +161,5 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Error starting bot: {e}")
 
-# Ensure proper port binding for Render
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=10000)
