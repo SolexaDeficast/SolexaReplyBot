@@ -61,6 +61,19 @@ def generate_captcha():
 
     return f"What is {num1} + {num2}?", options, correct_answer
 
+# Helper function to resolve user ID from @username or user ID
+async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if target_user.startswith("@"):
+            target_user = target_user[1:]  # Remove the '@' symbol
+            user = await context.bot.get_chat_member(chat_id, target_user)
+            return user.user.id
+        else:
+            return int(target_user)
+    except Exception as e:
+        logger.error(f"Error resolving user: {e}")
+        return None
+
 # Function to handle new members
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -219,23 +232,10 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 target_user = context.args[0]
                 chat_id = update.message.chat_id
 
-                # Resolve user ID from mention or direct ID
-                if target_user.startswith("@"):
-                    target_user = target_user[1:]  # Remove the '@' symbol
-                    try:
-                        user = await context.bot.get_chat_member(chat_id, target_user)
-                        user_id = user.user.id
-                    except Exception as e:
-                        await update.message.reply_text(f"Error: {e}. User @{target_user} may not exist in this chat.")
-                        return
-                else:
-                    user_id = int(target_user)
-
-                # Ensure the user exists in the chat
-                try:
-                    await context.bot.get_chat_member(chat_id, user_id)
-                except Exception as e:
-                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
+                # Resolve user ID
+                user_id = await resolve_user(chat_id, target_user, context)
+                if user_id is None:
+                    await update.message.reply_text(f"Error: User {target_user} may not exist in this chat.")
                     return
 
                 # Ban the user
@@ -256,23 +256,10 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 target_user = context.args[0]
                 chat_id = update.message.chat_id
 
-                # Resolve user ID from mention or direct ID
-                if target_user.startswith("@"):
-                    target_user = target_user[1:]  # Remove the '@' symbol
-                    try:
-                        user = await context.bot.get_chat_member(chat_id, target_user)
-                        user_id = user.user.id
-                    except Exception as e:
-                        await update.message.reply_text(f"Error: {e}. User @{target_user} may not exist in this chat.")
-                        return
-                else:
-                    user_id = int(target_user)
-
-                # Ensure the user exists in the chat
-                try:
-                    await context.bot.get_chat_member(chat_id, user_id)
-                except Exception as e:
-                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
+                # Resolve user ID
+                user_id = await resolve_user(chat_id, target_user, context)
+                if user_id is None:
+                    await update.message.reply_text(f"Error: User {target_user} may not exist in this chat.")
                     return
 
                 # Kick the user
@@ -293,30 +280,17 @@ async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration
                 target_user = context.args[0]
                 chat_id = update.message.chat_id
 
-                # Resolve user ID from mention or direct ID
-                if target_user.startswith("@"):
-                    target_user = target_user[1:]  # Remove the '@' symbol
-                    try:
-                        user = await context.bot.get_chat_member(chat_id, target_user)
-                        user_id = user.user.id
-                    except Exception as e:
-                        await update.message.reply_text(f"Error: {e}. User @{target_user} may not exist in this chat.")
-                        return
-                else:
-                    user_id = int(target_user)
-
-                # Ensure the user exists in the chat
-                try:
-                    await context.bot.get_chat_member(chat_id, user_id)
-                except Exception as e:
-                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
+                # Resolve user ID
+                user_id = await resolve_user(chat_id, target_user, context)
+                if user_id is None:
+                    await update.message.reply_text(f"Error: User {target_user} may not exist in this chat.")
                     return
 
                 # Mute the user
                 permissions = ChatPermissions(can_send_messages=False)
                 until_date = update.message.date + duration
                 await context.bot.restrict_chat_member(chat_id, user_id, permissions, until_date=until_date)
-                await update.message.reply_text(f"User {target_user} has been muted for {duration.total_seconds() // 60} minutes.")
+                await update.message.reply_text(f"User {target_user} has been muted for {int(duration.total_seconds() // 60)} minutes.")
             except (IndexError, ValueError):
                 await update.message.reply_text("Usage: /mute10 <username> or /mute10 <user_id>")
         else:
