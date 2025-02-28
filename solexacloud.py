@@ -66,8 +66,10 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
     try:
         if target_user.startswith("@"):
             target_user = target_user[1:]  # Remove the '@' symbol
-            user = await context.bot.get_chat_member(chat_id, target_user)
-            return user.user.id
+            async for member in context.bot.get_chat_member_count(chat_id):  # Iterate through all members
+                user = await context.bot.get_chat_member(chat_id, target_user)
+                if user.user.username and user.user.username.lower() == target_user.lower():
+                    return user.user.id
         else:
             return int(target_user)
     except Exception as e:
