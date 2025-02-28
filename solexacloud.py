@@ -66,14 +66,23 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
     try:
         if target_user.startswith("@"):
             target_user = target_user[1:]  # Remove the '@' symbol
-            async for member in context.bot.get_chat_members(chat_id):  # Iterate through all members
-                if member.user.username and member.user.username.lower() == target_user.lower():
+            normalized_username = target_user.lower()
+
+            # Attempt to resolve the user by iterating through all members
+            async for member in context.bot.get_chat_members(chat_id):
+                if member.user.username and member.user.username.lower() == normalized_username:
                     return member.user.id
         else:
-            return int(target_user)
+            return int(target_user)  # Resolve as user ID
     except Exception as e:
         logger.error(f"Error resolving user: {e}")
         return None
+
+# Helper function to get user ID from reply
+async def get_user_id_from_reply(update: Update):
+    if update.message.reply_to_message:
+        return update.message.reply_to_message.from_user.id
+    return None
 
 # Function to handle new members
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -230,20 +239,31 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.chat.type == "private":  # Ensure this is a group chat
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
-                target_user = context.args[0]
+                target_user = context.args[0] if context.args else None
                 chat_id = update.message.chat_id
 
-                # Resolve user ID
-                user_id = await resolve_user(chat_id, target_user, context)
+                # Resolve user ID from arguments or reply
+                if target_user:
+                    user_id = await resolve_user(chat_id, target_user, context)
+                else:
+                    user_id = await get_user_id_from_reply(update)
+
                 if user_id is None:
-                    await update.message.reply_text(f"Error: User {target_user} may not exist in this chat.")
+                    await update.message.reply_text("Error: Please specify a valid username or reply to a message.")
+                    return
+
+                # Ensure the user exists in the chat
+                try:
+                    await context.bot.get_chat_member(chat_id, user_id)
+                except Exception as e:
+                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
                     return
 
                 # Ban the user
                 await context.bot.ban_chat_member(chat_id, user_id)
-                await update.message.reply_text(f"User {target_user} has been banned.")
-            except (IndexError, ValueError):
-                await update.message.reply_text("Usage: /ban <username> or /ban <user_id>")
+                await update.message.reply_text(f"User has been banned.")
+            except IndexError:
+                await update.message.reply_text("Usage: /ban <username> or reply to a message with /ban")
         else:
             await update.message.reply_text("You do not have permission to use this command.")
     else:
@@ -254,20 +274,31 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.chat.type == "private":  # Ensure this is a group chat
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
-                target_user = context.args[0]
+                target_user = context.args[0] if context.args else None
                 chat_id = update.message.chat_id
 
-                # Resolve user ID
-                user_id = await resolve_user(chat_id, target_user, context)
+                # Resolve user ID from arguments or reply
+                if target_user:
+                    user_id = await resolve_user(chat_id, target_user, context)
+                else:
+                    user_id = await get_user_id_from_reply(update)
+
                 if user_id is None:
-                    await update.message.reply_text(f"Error: User {target_user} may not exist in this chat.")
+                    await update.message.reply_text("Error: Please specify a valid username or reply to a message.")
+                    return
+
+                # Ensure the user exists in the chat
+                try:
+                    await context.bot.get_chat_member(chat_id, user_id)
+                except Exception as e:
+                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
                     return
 
                 # Kick the user
                 await context.bot.unban_chat_member(chat_id, user_id)
-                await update.message.reply_text(f"User {target_user} has been kicked.")
-            except (IndexError, ValueError):
-                await update.message.reply_text("Usage: /kick <username> or /kick <user_id>")
+                await update.message.reply_text(f"User has been kicked.")
+            except IndexError:
+                await update.message.reply_text("Usage: /kick <username> or reply to a message with /kick")
         else:
             await update.message.reply_text("You do not have permission to use this command.")
     else:
@@ -278,22 +309,33 @@ async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration
     if not update.message.chat.type == "private":  # Ensure this is a group chat
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
-                target_user = context.args[0]
+                target_user = context.args[0] if context.args else None
                 chat_id = update.message.chat_id
 
-                # Resolve user ID
-                user_id = await resolve_user(chat_id, target_user, context)
+                # Resolve user ID from arguments or reply
+                if target_user:
+                    user_id = await resolve_user(chat_id, target_user, context)
+                else:
+                    user_id = await get_user_id_from_reply(update)
+
                 if user_id is None:
-                    await update.message.reply_text(f"Error: User {target_user} may not exist in this chat.")
+                    await update.message.reply_text("Error: Please specify a valid username or reply to a message.")
+                    return
+
+                # Ensure the user exists in the chat
+                try:
+                    await context.bot.get_chat_member(chat_id, user_id)
+                except Exception as e:
+                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
                     return
 
                 # Mute the user
                 permissions = ChatPermissions(can_send_messages=False)
                 until_date = update.message.date + duration
                 await context.bot.restrict_chat_member(chat_id, user_id, permissions, until_date=until_date)
-                await update.message.reply_text(f"User {target_user} has been muted for {int(duration.total_seconds() // 60)} minutes.")
-            except (IndexError, ValueError):
-                await update.message.reply_text("Usage: /mute10 <username> or /mute10 <user_id>")
+                await update.message.reply_text(f"User has been muted for {int(duration.total_seconds() // 60)} minutes.")
+            except IndexError:
+                await update.message.reply_text(f"Usage: /mute10 <username> or reply to a message with /mute10")
         else:
             await update.message.reply_text("You do not have permission to use this command.")
     else:
