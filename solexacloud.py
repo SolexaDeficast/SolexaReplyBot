@@ -2,6 +2,7 @@ import os
 import logging
 import random
 import re  # Import regex for exact word matching
+from datetime import timedelta
 from fastapi import FastAPI, Request
 import uvicorn
 from telegram import (
@@ -205,7 +206,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Welcome to the bot! Here are some available features:\n\n"
         "- Type keywords like 'audio', 'video', 'profits', etc., to get corresponding media.\n"
         "- New members must solve a captcha to join the chat.\n"
-        "- Admins can use commands like /ban, /kick, /addsolexafilter, /listsolexafilters, /removesolexafilter to manage the group.\n"
+        "- Admins can use commands like /ban, /kick, /mute10, /mute30, /mute1hr, /addsolexafilter, /listsolexafilters, /removesolexafilter to manage the group.\n"
         "- For more information, contact the bot administrator."
     )
     await update.message.reply_text(help_text)
@@ -284,6 +285,57 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("This command can only be used in group chats.")
 
+# Function to mute a user for a specified duration (admin only)
+async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration: timedelta):
+    if not update.message.chat.type == "private":  # Ensure this is a group chat
+        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+            try:
+                target_user = context.args[0]
+                chat_id = update.message.chat_id
+
+                # Resolve user ID from mention or direct ID
+                if target_user.startswith("@"):
+                    target_user = target_user[1:]  # Remove the '@' symbol
+                    try:
+                        user = await context.bot.get_chat_member(chat_id, target_user)
+                        user_id = user.user.id
+                    except Exception as e:
+                        await update.message.reply_text(f"Error: {e}. User @{target_user} may not exist in this chat.")
+                        return
+                else:
+                    user_id = int(target_user)
+
+                # Ensure the user exists in the chat
+                try:
+                    await context.bot.get_chat_member(chat_id, user_id)
+                except Exception as e:
+                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
+                    return
+
+                # Mute the user
+                permissions = ChatPermissions(can_send_messages=False)
+                until_date = update.message.date + duration
+                await context.bot.restrict_chat_member(chat_id, user_id, permissions, until_date=until_date)
+                await update.message.reply_text(f"User {target_user} has been muted for {duration.total_seconds() // 60} minutes.")
+            except (IndexError, ValueError):
+                await update.message.reply_text("Usage: /mute10 <username> or /mute10 <user_id>")
+        else:
+            await update.message.reply_text("You do not have permission to use this command.")
+    else:
+        await update.message.reply_text("This command can only be used in group chats.")
+
+# Function to mute a user for 10 minutes (admin only)
+async def mute10(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await mute_user(update, context, timedelta(minutes=10))
+
+# Function to mute a user for 30 minutes (admin only)
+async def mute30(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await mute_user(update, context, timedelta(minutes=30))
+
+# Function to mute a user for 1 hour (admin only)
+async def mute1hr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await mute_user(update, context, timedelta(hours=1))
+
 # Function to add a filter (admin only)
 async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.chat.type == "private":  # Ensure this is a group chat
@@ -344,6 +396,9 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("ban", ban_user))
 application.add_handler(CommandHandler("kick", kick_user))
+application.add_handler(CommandHandler("mute10", mute10))
+application.add_handler(CommandHandler("mute30", mute30))
+application.add_handler(CommandHandler("mute1hr", mute1hr))
 application.add_handler(CommandHandler("addsolexafilter", add_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
