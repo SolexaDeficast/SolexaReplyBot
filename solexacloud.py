@@ -71,7 +71,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for member in update.message.new_chat_members:
             chat_id = update.message.chat_id
             user_id = member.id
-            username = member.first_name
+            username = member.first_name 
 
             logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
 
@@ -129,10 +129,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 can_send_polls=True,
                 can_add_web_page_previews=True
             )
-            try:
-                permissions.can_read_all_group_messages = True
-            except AttributeError:
-                logger.warning("Attribute error")
 
             await context.bot.restrict_chat_member(chat_id, target_user_id, permissions)
             await query.message.edit_text("✅ Verified!")
@@ -367,7 +363,7 @@ application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
-application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"captcha_\d+_\d+"))
+application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
 # FASTAPI WEBHOOK
 @app.post("/telegram")
