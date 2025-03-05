@@ -25,11 +25,9 @@ app = FastAPI()
 application = Application.builder().token(TOKEN).build()
 
 keyword_responses = {
-    "audio": "test.mp3",
-    "secret": "secret.mp3",
-    "video": "test.mp4",
+    "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
+    "PutVideoTriggerKeywordHere": "PutMp4FileNameHere.mp4",
     "profits": "PROFITS.jpg",
-    "commercial": "commercial.mp4",
     "slut": "SLUT.jpg",
     "launch cat": "launchcat.gif"
 }
