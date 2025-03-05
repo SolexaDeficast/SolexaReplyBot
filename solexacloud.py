@@ -53,9 +53,18 @@ def generate_captcha():
 async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEFAULT_TYPE) -> int or None:
     try:
         if target_user.startswith("@"):
-            # Preserve the @ symbol for API compatibility
-            user = await context.bot.get_chat_member(chat_id, target_user)
-            return user.user.id
+            target_username = target_user[1:].lower()  # Remove @ and lowercase
+            # First try direct lookup (case-sensitive)
+            try:
+                user = await context.bot.get_chat_member(chat_id, target_username)
+                return user.user.id
+            except Exception:
+                pass  # Fallback to iterating all members
+
+            # Iterate all members (case-insensitive)
+            async for member in context.bot.iter_chat_members(chat_id):
+                if member.user.username and member.user.username.lower() == target_username:
+                    return member.user.id
         else:
             return int(target_user)
     except Exception as e:
@@ -63,7 +72,6 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
         return None
 
 async def get_user_id_from_reply(update: Update) -> int or None:
-    """Get user ID from the message being replied to"""
     if update.message.reply_to_message:
         return update.message.reply_to_message.from_user.id
     return None
@@ -156,7 +164,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message.text:
-            return  # Skip non-text messages
+            return
         
         message_text = update.message.text.lower()
         chat_id = update.message.chat_id
@@ -189,7 +197,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message.text:
-            return  # Skip non-text messages
+            return
         
         message_text = update.message.text.lower()
         chat_id = update.message.chat_id
@@ -208,7 +216,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Keywords: audio/video/profits/etc → media files\n"
         "- New members must solve captcha\n"
         "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, etc\n"
-        "- Reply to a message to target users for commands\n"
+        "- Reply to messages to target users\n"
         "- Contact admin for help"
     )
     await update.message.reply_text(help_text)
@@ -256,9 +264,8 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f"Error: User {target_user} not found")
                     return
 
-                # Proper kick: ban then unban
                 await context.bot.ban_chat_member(update.message.chat_id, user_id)
-                await context.bot.unban_chat_member(update.message.chat_id, user_id)
+                await context.bot.unban_chat_member(update.message.chat_id, user_id, only_if_banned=True)
                 await update.message.reply_text("User kicked ✅")
             except IndexError:
                 await update.message.reply_text("Usage: /kick @username or reply to a user")
