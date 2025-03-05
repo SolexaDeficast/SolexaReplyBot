@@ -53,11 +53,12 @@ def generate_captcha():
 async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEFAULT_TYPE) -> int or None:
     try:
         if target_user.startswith("@"):
-            # Preserve the @ symbol (required for API)
-            user = await context.bot.get_chat_member(chat_id, target_user)
+            username = target_user[1:]  # Remove @ symbol
+            # Direct lookup by username (without @)
+            user = await context.bot.get_chat_member(chat_id, username)
             return user.user.id
         else:
-            return int(target_user)
+            return int(target_user)  # Treat as user ID
     except Exception as e:
         logger.error(f"Error resolving user {target_user}: {e}")
         return None
