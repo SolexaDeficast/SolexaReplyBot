@@ -11,6 +11,7 @@ from telegram import (
 from telegram.ext import (
     Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler, CommandHandler
 )
+from telegram.error import BadRequest
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -51,14 +52,23 @@ def generate_captcha():
 async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEFAULT_TYPE) -> int or None:
     try:
         if target_user.startswith("@"):
-            username = target_user[1:]  # Remove @ symbol
-            # Direct lookup by username (without @)
-            user = await context.bot.get_chat_member(chat_id, username)
-            return user.user.id
+            username = target_user[1:].lower()
+            
+            # First try direct lookup
+            try:
+                member = await context.bot.get_chat_member(chat_id, username)
+                return member.user.id
+            except BadRequest:
+                # Fallback to full member search
+                members = await context.bot.get_chat_members(chat_id)
+                for member in members:
+                    if member.user.username and member.user.username.lower() == username:
+                        return member.user.id
+                return None
         else:
-            return int(target_user)  # Treat as user ID
+            return int(target_user)
     except Exception as e:
-        logger.error(f"Error resolving user {target_user}: {e}")
+        logger.error(f"Resolution failed for {target_user}: {str(e)}")
         return None
 
 async def get_user_id_from_reply(update: Update) -> int or None:
