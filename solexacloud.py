@@ -1,7 +1,7 @@
 import os
 import logging
 import random
-import re  # Import regex for exact word matching
+import re
 from datetime import timedelta
 from fastapi import FastAPI, Request
 import uvicorn
@@ -12,26 +12,18 @@ from telegram.ext import (
     Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler, CommandHandler
 )
 
-# Enable detailed logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Read environment variables
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"
 
-# Dictionary to track users' captcha attempts
 captcha_attempts = {}
-
-# Initialize FastAPI
 app = FastAPI()
-
-# Initialize Telegram bot
 application = Application.builder().token(TOKEN).build()
 
-# Define the keywords and corresponding media files
 keyword_responses = {
     "audio": "test.mp3",
     "secret": "secret.mp3",
@@ -42,10 +34,8 @@ keyword_responses = {
     "launch cat": "launchcat.gif"
 }
 
-# Dictionary to store chat-specific filters
 filters_dict = {}
 
-# Function to generate a math captcha
 def generate_captcha():
     num1 = random.randint(1, 10)
     num2 = random.randint(1, 10)
@@ -58,33 +48,20 @@ def generate_captcha():
             wrong_answers.add(wrong)
     options = list(wrong_answers) + [correct_answer]
     random.shuffle(options)
-
     return f"What is {num1} + {num2}?", options, correct_answer
 
-# Helper function to resolve user ID from @username or user ID
-async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEFAULT_TYPE):
+async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEFAULT_TYPE) -> int or None:
     try:
         if target_user.startswith("@"):
-            target_user = target_user[1:]  # Remove the '@' symbol
-            normalized_username = target_user.lower()
-
-            # Attempt to resolve the user by iterating through all members
-            async for member in context.bot.get_chat_members(chat_id):
-                if member.user.username and member.user.username.lower() == normalized_username:
-                    return member.user.id
+            # Preserve the @ symbol for API compatibility
+            user = await context.bot.get_chat_member(chat_id, target_user)
+            return user.user.id
         else:
-            return int(target_user)  # Resolve as user ID
+            return int(target_user)
     except Exception as e:
-        logger.error(f"Error resolving user: {e}")
+        logger.error(f"Error resolving user {target_user}: {e}")
         return None
 
-# Helper function to get user ID from reply
-async def get_user_id_from_reply(update: Update):
-    if update.message.reply_to_message:
-        return update.message.reply_to_message.from_user.id
-    return None
-
-# Function to handle new members
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         for member in update.message.new_chat_members:
@@ -114,7 +91,6 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.error(f"Error handling new member event: {e}")
 
-# Function to verify captcha response
 async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -129,11 +105,11 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         answer = int(answer)
 
         if user_id != target_user_id:
-            await query.answer("❌ You are not authorized to answer this captcha.", show_alert=True)
+            await query.answer("❌ Unauthorized", show_alert=True)
             return
 
         if target_user_id not in captcha_attempts:
-            await query.answer("This verification has expired.")
+            await query.answer("Expired")
             return
 
         correct_answer = captcha_attempts[target_user_id]["answer"]
@@ -141,7 +117,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         attempts = captcha_attempts[target_user_id]["attempts"]
 
         if answer == correct_answer:
-            # Fully restore permissions
             permissions = ChatPermissions(
                 can_send_messages=True,
                 can_send_photos=True,
@@ -151,13 +126,12 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 can_add_web_page_previews=True
             )
             try:
-                # Attempt to enable full chat history access
                 permissions.can_read_all_group_messages = True
             except AttributeError:
-                logger.warning("The 'can_read_all_group_messages' attribute is not supported in this version.")
+                logger.warning("Attribute error")
 
             await context.bot.restrict_chat_member(chat_id, target_user_id, permissions)
-            await query.message.edit_text("✅ Verification successful! You may now participate in the chat.")
+            await query.message.edit_text("✅ Verified!")
             del captcha_attempts[target_user_id]
         else:
             attempts += 1
@@ -166,32 +140,28 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if attempts >= 3:
                 await context.bot.ban_chat_member(chat_id, target_user_id)
                 await context.bot.unban_chat_member(chat_id, target_user_id)
-                await query.message.edit_text("❌ You failed verification 3 times and have been removed from the group.")
+                await query.message.edit_text("❌ Removed after 3 failed attempts")
                 del captcha_attempts[target_user_id]
             else:
-                await query.answer("❌ Incorrect answer. Please try again.")
+                await query.answer("❌ Incorrect answer")
     except Exception as e:
-        logger.error(f"Error handling captcha verification: {e}")
+        logger.error(f"Captcha error: {e}")
 
-# Function to handle text messages
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         message_text = update.message.text.lower()
         chat_id = update.message.chat_id
 
-        # Check if the message matches any filters using exact word matching or command-like format
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
-                # Match exact word or command-like format (including when it's the first word)
                 if re.search(rf"(?:^|\s){re.escape('/' + keyword)}(?:\s|$)|\b{re.escape(keyword)}\b", message_text):
                     await update.message.reply_text(response)
                     return
 
-        # Check if the message matches any predefined keywords
         for keyword, media_file in keyword_responses.items():
             if keyword in message_text:
                 if not os.path.exists(media_file):
-                    await update.message.reply_text(f"Sorry, the file '{media_file}' is missing.")
+                    await update.message.reply_text(f"File missing: {media_file}")
                     return
 
                 with open(media_file, 'rb') as media:
@@ -205,157 +175,108 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.message.reply_animation(animation=media)
                 break
     except Exception as e:
-        logger.error(f"Error handling message: {e}")
+        logger.error(f"Message error: {e}")
 
-# Function to handle commands as filters
 async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         message_text = update.message.text.lower()
         chat_id = update.message.chat_id
 
-        # Check if the message matches any filters (even if it starts with /)
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
-                # Match command-like format at the start of the message
                 if re.match(rf"^{re.escape('/' + keyword)}$", message_text):
                     await update.message.reply_text(response)
                     return
     except Exception as e:
-        logger.error(f"Error handling command as filter: {e}")
+        logger.error(f"Filter error: {e}")
 
-# Function to handle the /help command
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "Welcome to the bot! Here are some available features:\n\n"
-        "- Type keywords like 'audio', 'video', 'profits', etc., to get corresponding media.\n"
-        "- New members must solve a captcha to join the chat.\n"
-        "- Admins can use commands like /ban, /kick, /mute10, /mute30, /mute1hr, /addsolexafilter, /listsolexafilters, /removesolexafilter to manage the group.\n"
-        "- For more information, contact the bot administrator."
+        "Features:\n"
+        "- Keywords: audio/video/profits/etc → media files\n"
+        "- New members must solve captcha\n"
+        "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, etc\n"
+        "- Contact admin for help"
     )
     await update.message.reply_text(help_text)
 
-# Function to ban a user (admin only)
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.chat.type == "private":  # Ensure this is a group chat
+    if update.message.chat.type != "private":
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
-                target_user = context.args[0] if context.args else None
+                target_user = context.args[0]
                 chat_id = update.message.chat_id
 
-                # Resolve user ID from arguments or reply
-                if target_user:
-                    user_id = await resolve_user(chat_id, target_user, context)
-                else:
-                    user_id = await get_user_id_from_reply(update)
-
-                if user_id is None:
-                    await update.message.reply_text("Error: Please specify a valid username or reply to a message.")
+                user_id = await resolve_user(chat_id, target_user, context)
+                if not user_id:
+                    await update.message.reply_text(f"Error: User {target_user} not found")
                     return
 
-                # Ensure the user exists in the chat
-                try:
-                    await context.bot.get_chat_member(chat_id, user_id)
-                except Exception as e:
-                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
-                    return
-
-                # Ban the user
                 await context.bot.ban_chat_member(chat_id, user_id)
-                await update.message.reply_text(f"User has been banned.")
+                await update.message.reply_text(f"User {target_user} banned ✅")
             except IndexError:
-                await update.message.reply_text("Usage: /ban <username> or reply to a message with /ban")
+                await update.message.reply_text("Usage: /ban @username or /ban 123456789")
         else:
-            await update.message.reply_text("You do not have permission to use this command.")
+            await update.message.reply_text("No permission ❌")
     else:
-        await update.message.reply_text("This command can only be used in group chats.")
+        await update.message.reply_text("Group-only command ❌")
 
-# Function to kick a user (admin only)
 async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.chat.type == "private":  # Ensure this is a group chat
+    if update.message.chat.type != "private":
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
-                target_user = context.args[0] if context.args else None
+                target_user = context.args[0]
                 chat_id = update.message.chat_id
 
-                # Resolve user ID from arguments or reply
-                if target_user:
-                    user_id = await resolve_user(chat_id, target_user, context)
-                else:
-                    user_id = await get_user_id_from_reply(update)
-
-                if user_id is None:
-                    await update.message.reply_text("Error: Please specify a valid username or reply to a message.")
+                user_id = await resolve_user(chat_id, target_user, context)
+                if not user_id:
+                    await update.message.reply_text(f"Error: User {target_user} not found")
                     return
 
-                # Ensure the user exists in the chat
-                try:
-                    await context.bot.get_chat_member(chat_id, user_id)
-                except Exception as e:
-                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
-                    return
-
-                # Kick the user
-                await context.bot.unban_chat_member(chat_id, user_id)
-                await update.message.reply_text(f"User has been kicked.")
+                await context.bot.ban_chat_member(chat_id, user_id)  # Use ban then unban for kick
+                await context.bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+                await update.message.reply_text(f"User {target_user} kicked ✅")
             except IndexError:
-                await update.message.reply_text("Usage: /kick <username> or reply to a message with /kick")
+                await update.message.reply_text("Usage: /kick @username or /kick 123456789")
         else:
-            await update.message.reply_text("You do not have permission to use this command.")
+            await update.message.reply_text("No permission ❌")
     else:
-        await update.message.reply_text("This command can only be used in group chats.")
+        await update.message.reply_text("Group-only command ❌")
 
-# Function to mute a user for a specified duration (admin only)
 async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration: timedelta):
-    if not update.message.chat.type == "private":  # Ensure this is a group chat
+    if update.message.chat.type != "private":
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
-                target_user = context.args[0] if context.args else None
+                target_user = context.args[0]
                 chat_id = update.message.chat_id
 
-                # Resolve user ID from arguments or reply
-                if target_user:
-                    user_id = await resolve_user(chat_id, target_user, context)
-                else:
-                    user_id = await get_user_id_from_reply(update)
-
-                if user_id is None:
-                    await update.message.reply_text("Error: Please specify a valid username or reply to a message.")
+                user_id = await resolve_user(chat_id, target_user, context)
+                if not user_id:
+                    await update.message.reply_text(f"Error: User {target_user} not found")
                     return
 
-                # Ensure the user exists in the chat
-                try:
-                    await context.bot.get_chat_member(chat_id, user_id)
-                except Exception as e:
-                    await update.message.reply_text(f"Error: {e}. User with ID {user_id} may not exist in this chat.")
-                    return
-
-                # Mute the user
                 permissions = ChatPermissions(can_send_messages=False)
-                until_date = update.message.date + duration
-                await context.bot.restrict_chat_member(chat_id, user_id, permissions, until_date=until_date)
-                await update.message.reply_text(f"User has been muted for {int(duration.total_seconds() // 60)} minutes.")
+                until = update.message.date + duration
+                await context.bot.restrict_chat_member(chat_id, user_id, permissions, until_date=until)
+                await update.message.reply_text(f"Muted {target_user} for {int(duration.total_seconds()/60)} minutes ✅")
             except IndexError:
-                await update.message.reply_text(f"Usage: /mute10 <username> or reply to a message with /mute10")
+                await update.message.reply_text(f"Usage: /mute10 @username or /mute10 123456789")
         else:
-            await update.message.reply_text("You do not have permission to use this command.")
+            await update.message.reply_text("No permission ❌")
     else:
-        await update.message.reply_text("This command can only be used in group chats.")
+        await update.message.reply_text("Group-only command ❌")
 
-# Function to mute a user for 10 minutes (admin only)
 async def mute10(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await mute_user(update, context, timedelta(minutes=10))
 
-# Function to mute a user for 30 minutes (admin only)
 async def mute30(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await mute_user(update, context, timedelta(minutes=30))
 
-# Function to mute a user for 1 hour (admin only)
 async def mute1hr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await mute_user(update, context, timedelta(hours=1))
 
-# Function to add a filter (admin only)
 async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.chat.type == "private":  # Ensure this is a group chat
+    if update.message.chat.type != "private":
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
                 keyword = context.args[0].lower()
@@ -366,32 +287,30 @@ async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     filters_dict[chat_id] = {}
 
                 filters_dict[chat_id][keyword] = response
-                await update.message.reply_text(f"Filter '{keyword}' added successfully.")
+                await update.message.reply_text(f"Filter '{keyword}' added ✅")
             except IndexError:
-                await update.message.reply_text("Usage: /addsolexafilter <keyword> <response>")
+                await update.message.reply_text("Usage: /addsolexafilter keyword response")
         else:
-            await update.message.reply_text("You do not have permission to use this command.")
+            await update.message.reply_text("No permission ❌")
     else:
-        await update.message.reply_text("This command can only be used in group chats.")
+        await update.message.reply_text("Group-only command ❌")
 
-# Function to list all filters (admin only)
 async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.chat.type == "private":  # Ensure this is a group chat
+    if update.message.chat.type != "private":
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             chat_id = update.message.chat_id
-            if chat_id in filters_dict and filters_dict[chat_id]:
-                filter_list = "\n".join([f"{k}: {v}" for k, v in filters_dict[chat_id].items()])
-                await update.message.reply_text(f"Filters in this chat:\n{filter_list}")
+            filters_list = filters_dict.get(chat_id, {})
+            if filters_list:
+                await update.message.reply_text(f"Filters:\n{chr(10).join([f'{k}: {v}' for k, v in filters_list.items()])}")
             else:
-                await update.message.reply_text("No filters have been added to this chat.")
+                await update.message.reply_text("No filters set")
         else:
-            await update.message.reply_text("You do not have permission to use this command.")
+            await update.message.reply_text("No permission ❌")
     else:
-        await update.message.reply_text("This command can only be used in group chats.")
+        await update.message.reply_text("Group-only command ❌")
 
-# Function to remove a filter (admin only)
 async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.chat.type == "private":  # Ensure this is a group chat
+    if update.message.chat.type != "private":
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
                 keyword = context.args[0].lower()
@@ -399,17 +318,17 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if chat_id in filters_dict and keyword in filters_dict[chat_id]:
                     del filters_dict[chat_id][keyword]
-                    await update.message.reply_text(f"Filter '{keyword}' removed successfully.")
+                    await update.message.reply_text(f"Filter '{keyword}' removed ✅")
                 else:
-                    await update.message.reply_text(f"Filter '{keyword}' does not exist.")
+                    await update.message.reply_text("Filter not found ❌")
             except IndexError:
-                await update.message.reply_text("Usage: /removesolexafilter <keyword>")
+                await update.message.reply_text("Usage: /removesolexafilter keyword")
         else:
-            await update.message.reply_text("You do not have permission to use this command.")
+            await update.message.reply_text("No permission ❌")
     else:
-        await update.message.reply_text("This command can only be used in group chats.")
+        await update.message.reply_text("Group-only command ❌")
 
-# Add handlers for all commands and messages
+# HANDLERS
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("ban", ban_user))
 application.add_handler(CommandHandler("kick", kick_user))
@@ -419,20 +338,12 @@ application.add_handler(CommandHandler("mute1hr", mute1hr))
 application.add_handler(CommandHandler("addsolexafilter", add_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
-
-# Add a custom handler for commands that act as filters
-application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
-
-# Add a handler for regular text messages
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-# Add a handler for new chat members
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
-
-# Add a handler for captcha verification
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"captcha_\d+_\d+"))
 
-# Webhook handler
+# FASTAPI WEBHOOK
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     data = await request.json()
@@ -440,12 +351,10 @@ async def telegram_webhook(request: Request):
     await application.process_update(update)
     return {"status": "ok"}
 
-# Startup event
 @app.on_event("startup")
-async def startup_event():
+async def startup():
     await application.initialize()
     await application.start()
-    await application.bot.delete_webhook()
     await application.bot.set_webhook(WEBHOOK_URL)
 
 if __name__ == "__main__":
