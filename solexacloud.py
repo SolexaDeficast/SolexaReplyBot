@@ -53,18 +53,9 @@ def generate_captcha():
 async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEFAULT_TYPE) -> int or None:
     try:
         if target_user.startswith("@"):
-            target_username = target_user[1:].lower()  # Remove @ and lowercase
-            # First try direct lookup (case-sensitive)
-            try:
-                user = await context.bot.get_chat_member(chat_id, target_username)
-                return user.user.id
-            except Exception:
-                pass  # Fallback to iterating all members
-
-            # Iterate all members (case-insensitive)
-            async for member in context.bot.iter_chat_members(chat_id):
-                if member.user.username and member.user.username.lower() == target_username:
-                    return member.user.id
+            # Preserve the @ symbol (required for API)
+            user = await context.bot.get_chat_member(chat_id, target_user)
+            return user.user.id
         else:
             return int(target_user)
     except Exception as e:
@@ -165,7 +156,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message.text:
             return
-        
+
         message_text = update.message.text.lower()
         chat_id = update.message.chat_id
 
@@ -198,7 +189,7 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
     try:
         if not update.message.text:
             return
-        
+
         message_text = update.message.text.lower()
         chat_id = update.message.chat_id
 
