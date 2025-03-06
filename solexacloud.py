@@ -1,5 +1,6 @@
 import os
 import logging
+import json  # NEW
 import random
 import re
 from datetime import timedelta
@@ -28,12 +29,39 @@ application = Application.builder().token(TOKEN).build()
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
     "PutVideoTriggerKeywordHere": "PutMp4FileNameHere.mp4",
-    "profits": "PROFITS.jpg",
+    "pro fits": "PROFITS.jpg",
     "slut": "SLUT.jpg",
     "launch cat": "launchcat.gif"
 }
 
+# NEW - Persistent storage setup
+FILTERS_FILE = "/data/filters.json"
 filters_dict = {}
+
+def load_filters():
+    global filters_dict
+    try:
+        if os.path.exists(FILTERS_FILE):
+            with open(FILTERS_FILE, 'r') as f:
+                data = json.load(f)
+                # Convert string keys back to integers
+                filters_dict = {int(chat_id): {k: v for k, v in filters.items()} 
+                               for chat_id, filters in data.items()}
+        else:
+            filters_dict = {}
+    except Exception as e:
+        logger.error(f"Error loading filters: {e}")
+        filters_dict = {}
+
+def save_filters():
+    try:
+        with open(FILTERS_FILE, 'w') as f:
+            # Convert integer keys to strings for JSON
+            serializable = {str(chat_id): filters 
+                           for chat_id, filters in filters_dict.items()}
+            json.dump(serializable, f)
+    except Exception as e:
+        logger.error(f"Error saving filters: {e}")
 
 def generate_captcha():
     num1 = random.randint(1, 10)
@@ -55,7 +83,6 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
             username = target_user[1:].lower()
             logger.info(f"Resolving username: @{username} in chat {chat_id}")
             
-            # Search all members for the username
             try:
                 async for member in context.bot.get_chat_members(chat_id):
                     member_username = member.user.username
@@ -71,7 +98,6 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
                 logger.error(f"Error searching members: {e}")
                 return None
         else:
-            # Assume it's a user ID
             user_id = int(target_user)
             logger.info(f"Using provided user ID: {user_id}")
             return user_id
@@ -266,7 +292,7 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         return
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
-                
+                 
                 if not user_id:
                     await update.message.reply_text(f"Error: User {target_user} not found")
                     return
@@ -293,7 +319,7 @@ async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration
                         return
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
-                
+                 
                 if not user_id:
                     await update.message.reply_text(f"Error: User {target_user} not found")
                     return
@@ -330,6 +356,7 @@ async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     filters_dict[chat_id] = {}
 
                 filters_dict[chat_id][keyword] = response
+                save_filters()  # NEW
                 await update.message.reply_text(f"Filter '{keyword}' added ✅")
             except IndexError:
                 await update.message.reply_text("Usage: /addsolexafilter keyword response")
@@ -361,6 +388,7 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if chat_id in filters_dict and keyword in filters_dict[chat_id]:
                     del filters_dict[chat_id][keyword]
+                    save_filters()  # NEW
                     await update.message.reply_text(f"Filter '{keyword}' removed ✅")
                 else:
                     await update.message.reply_text("Filter not found ❌")
@@ -396,6 +424,7 @@ async def telegram_webhook(request: Request):
 
 @app.on_event("startup")
 async def startup():
+    load_filters()  # NEW
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
