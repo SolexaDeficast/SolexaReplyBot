@@ -53,31 +53,28 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
     try:
         if target_user.startswith("@"):
             username = target_user[1:].lower()
+            logger.info(f"Resolving username: @{username} in chat {chat_id}")
             
-            # First try direct lookup
-            try:
-                member = await context.bot.get_chat_member(chat_id, username)
-                return member.user.id
-            except BadRequest as e:
-                if "User not found" in str(e):
-                    logger.warning(f"Direct lookup failed for @{username}, trying full member search")
-                else:
-                    logger.error(f"Error in user resolution: {e}")
-                    return None
-
-            # Fallback: Search all members
+            # Search all members for the username
             try:
                 async for member in context.bot.get_chat_members(chat_id):
-                    if member.user.username and member.user.username.lower() == username:
+                    member_username = member.user.username
+                    if member_username and member_username.lower() == username:
+                        logger.info(f"Found user @{username} with ID {member.user.id}")
                         return member.user.id
+                logger.warning(f"User @{username} not found in member list")
+                return None
             except Forbidden:
                 logger.error("Bot lacks permission to view member list")
                 return None
             except Exception as e:
-                logger.error(f"Member search failed: {e}")
+                logger.error(f"Error searching members: {e}")
                 return None
         else:
-            return int(target_user)
+            # Assume it's a user ID
+            user_id = int(target_user)
+            logger.info(f"Using provided user ID: {user_id}")
+            return user_id
     except ValueError:
         logger.error(f"Invalid user format: {target_user}")
         return None
