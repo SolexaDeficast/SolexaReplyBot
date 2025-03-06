@@ -11,7 +11,7 @@ from telegram import (
 from telegram.ext import (
     Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler, CommandHandler
 )
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Forbidden
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -58,21 +58,35 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
             try:
                 member = await context.bot.get_chat_member(chat_id, username)
                 return member.user.id
-            except BadRequest:
-                # Fallback to full member search
-                members = await context.bot.get_chat_members(chat_id)
-                for member in members:
+            except BadRequest as e:
+                if "User not found" in str(e):
+                    logger.warning(f"Direct lookup failed for @{username}, trying full member search")
+                else:
+                    logger.error(f"Error in user resolution: {e}")
+                    return None
+
+            # Fallback: Search all members
+            try:
+                async for member in context.bot.get_chat_members(chat_id):
                     if member.user.username and member.user.username.lower() == username:
                         return member.user.id
+            except Forbidden:
+                logger.error("Bot lacks permission to view member list")
+                return None
+            except Exception as e:
+                logger.error(f"Member search failed: {e}")
                 return None
         else:
             return int(target_user)
+    except ValueError:
+        logger.error(f"Invalid user format: {target_user}")
+        return None
     except Exception as e:
-        logger.error(f"Resolution failed for {target_user}: {str(e)}")
+        logger.error(f"Unexpected error resolving user: {e}")
         return None
 
 async def get_user_id_from_reply(update: Update) -> int or None:
-    if update.message.reply_to_message:
+    if update.message and update.message.reply_to_message:
         return update.message.reply_to_message.from_user.id
     return None
 
@@ -81,7 +95,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for member in update.message.new_chat_members:
             chat_id = update.message.chat_id
             user_id = member.id
-            username = member.first_name 
+            username = member.username or member.first_name
 
             logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
 
@@ -159,7 +173,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if not update.message.text:
+        if not update.message or not update.message.text:
             return
 
         message_text = update.message.text.lower()
@@ -192,7 +206,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if not update.message.text:
+        if not update.message or not update.message.text:
             return
 
         message_text = update.message.text.lower()
