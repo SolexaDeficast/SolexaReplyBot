@@ -1,6 +1,6 @@
 import os
 import logging
-import json  # NEW
+import json
 import random
 import re
 from datetime import timedelta
@@ -29,7 +29,7 @@ application = Application.builder().token(TOKEN).build()
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
     "PutVideoTriggerKeywordHere": "PutMp4FileNameHere.mp4",
-    "profits": "PROFITS.jpg",
+    "pro fits": "PROFITS.jpg",
     "slut": "SLUT.jpg",
     "launch cat": "launchcat.gif"
 }
@@ -194,54 +194,103 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Captcha error: {e}")
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not update.message or not update.message.text:
-            return
+# NEW - Unified handler for all content types
+async def handle_all_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    chat_id = message.chat_id
+    text = message.text.lower() if message.text else ""
+    caption = message.caption.lower() if message.caption else ""
 
-        message_text = update.message.text.lower()
-        chat_id = update.message.chat_id
-
+    for input_text in [text, caption]:
         if chat_id in filters_dict:
-            for keyword, response in filters_dict[chat_id].items():
-                if re.search(rf"(?:^|\s){re.escape('/' + keyword)}(?:\s|$)|\b{re.escape(keyword)}\b", message_text):
-                    await update.message.reply_text(response)
+            for keyword, actions in filters_dict.get(chat_id, {}).items():
+                pattern = rf"(?:^|\s){re.escape(keyword)}(?:\s|$)"
+                if re.search(pattern, input_text, re.IGNORECASE):
+                    for action in actions:
+                        try:
+                            if action["type"] == "text":
+                                await message.reply_text(action["content"])
+                            else:
+                                await send_media_action(message, action)
+                        except Exception as e:
+                            logger.error(f"Error sending action: {e}")
+                            await message.reply_text(f"Error sending {action['type']}")
                     return
 
-        for keyword, media_file in keyword_responses.items():
-            if keyword in message_text:
-                if not os.path.exists(media_file):
-                    await update.message.reply_text(f"File missing: {media_file}")
-                    return
-
-                with open(media_file, 'rb') as media:
-                    if media_file.endswith('.mp3'):
-                        await update.message.reply_audio(audio=media)
-                    elif media_file.endswith('.mp4'):
-                        await update.message.reply_video(video=media, supports_streaming=True, width=1280, height=720)
-                    elif media_file.endswith('.jpg'):
-                        await update.message.reply_photo(photo=media)
-                    elif media_file.endswith('.gif'):
-                        await update.message.reply_animation(animation=media)
-                break
-    except Exception as e:
-        logger.error(f"Message error: {e}")
-
-async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_media_action(message: Message, action: dict):
     try:
-        if not update.message or not update.message.text:
-            return
-
-        message_text = update.message.text.lower()
-        chat_id = update.message.chat_id
-
-        if chat_id in filters_dict:
-            for keyword, response in filters_dict[chat_id].items():
-                if re.match(rf"^{re.escape('/' + keyword)}$", message_text):
-                    await update.message.reply_text(response)
-                    return
+        content = action["content"]
+        if action["type"] == "video":
+            await message.reply_video(video=content)
+        elif action["type"] == "photo":
+            await message.reply_photo(photo=content)
+        elif action["type"] == "animation":
+            await message.reply_animation(animation=content)
+        elif action["type"] == "audio":
+            await message.reply_audio(audio=content)
+        elif action["type"] == "document":
+            await message.reply_document(document=content)
     except Exception as e:
-        logger.error(f"Filter error: {e}")
+        logger.error(f"Media send error: {e}")
+        raise
+
+# MODIFIED add_filter function
+async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type != "private":
+        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+            try:
+                # Extract keyword and text response
+                keyword = context.args[0].lower() if context.args else None
+                text_response = " ".join(context.args[1:]) if len(context.args) > 1 else None
+                
+                # Extract media
+                media = None
+                media_type = None
+                message = update.message
+                if message.video:
+                    media = message.video.file_id
+                    media_type = "video"
+                elif message.photo:
+                    media = message.photo[-1].file_id
+                    media_type = "photo"
+                elif message.animation:
+                    media = message.animation.file_id
+                    media_type = "animation"
+                elif message.audio:
+                    media = message.audio.file_id
+                    media_type = "audio"
+                elif message.document:
+                    media = message.document.file_id
+                    media_type = "document"
+                
+                # Validate input
+                if not keyword or (not text_response and not media):
+                    await update.message.reply_text("Usage: /addsolexafilter [keyword] [text] + optional media")
+                    return
+                
+                # Build actions list
+                actions = []
+                if text_response:
+                    actions.append({"type": "text", "content": text_response})
+                if media:
+                    actions.append({"type": media_type, "content": media})
+                
+                # Save to filters_dict
+                chat_id = update.message.chat_id
+                if chat_id not in filters_dict:
+                    filters_dict[chat_id] = {}
+                filters_dict[chat_id][keyword] = actions
+                save_filters()
+                
+                await update.message.reply_text(f"Filter '{keyword}' added with {len(actions)} action(s) ✅")
+                
+            except Exception as e:
+                logger.error(f"Error adding filter: {e}")
+                await update.message.reply_text("An error occurred")
+        else:
+            await update.message.reply_text("No permission ❌")
+    else:
+        await update.message.reply_text("Group-only command ❌")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -344,34 +393,14 @@ async def mute30(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mute1hr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await mute_user(update, context, timedelta(hours=1))
 
-async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type != "private":
-        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-            try:
-                keyword = context.args[0].lower()
-                response = " ".join(context.args[1:])
-                chat_id = update.message.chat_id
-
-                if chat_id not in filters_dict:
-                    filters_dict[chat_id] = {}
-
-                filters_dict[chat_id][keyword] = response
-                save_filters()  # NEW
-                await update.message.reply_text(f"Filter '{keyword}' added ✅")
-            except IndexError:
-                await update.message.reply_text("Usage: /addsolexafilter keyword response")
-        else:
-            await update.message.reply_text("No permission ❌")
-    else:
-        await update.message.reply_text("Group-only command ❌")
-
 async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             chat_id = update.message.chat_id
             filters_list = filters_dict.get(chat_id, {})
             if filters_list:
-                await update.message.reply_text(f"Filters:\n{chr(10).join([f'{k}: {v}' for k, v in filters_list.items()])}")
+                response = "Filters:\n" + "\n".join([f"{k}: {v}" for k, v in filters_list.items()])
+                await update.message.reply_text(response)
             else:
                 await update.message.reply_text("No filters set")
         else:
@@ -388,7 +417,7 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if chat_id in filters_dict and keyword in filters_dict[chat_id]:
                     del filters_dict[chat_id][keyword]
-                    save_filters()  # NEW
+                    save_filters()
                     await update.message.reply_text(f"Filter '{keyword}' removed ✅")
                 else:
                     await update.message.reply_text("Filter not found ❌")
@@ -410,8 +439,7 @@ application.add_handler(CommandHandler("addsolexafilter", add_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
+application.add_handler(MessageHandler(filters.ALL, handle_all_content))  # NEW handler
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
 # FASTAPI WEBHOOK
@@ -424,7 +452,7 @@ async def telegram_webhook(request: Request):
 
 @app.on_event("startup")
 async def startup():
-    load_filters()  # NEW
+    load_filters()
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
