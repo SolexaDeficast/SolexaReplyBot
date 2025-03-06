@@ -29,7 +29,7 @@ application = Application.builder().token(TOKEN).build()
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
     "PutVideoTriggerKeywordHere": "PutMp4FileNameHere.mp4",
-    "pro fits": "PROFITS.jpg",
+    "profits": "PROFITS.jpg",
     "slut": "SLUT.jpg",
     "launch cat": "launchcat.gif"
 }
