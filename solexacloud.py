@@ -7,7 +7,7 @@ from datetime import timedelta
 from fastapi import FastAPI, Request
 import uvicorn
 from telegram import (
-    Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, User
+    Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, User, Message
 )
 from telegram.ext import (
     Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler, CommandHandler
