@@ -26,6 +26,7 @@ captcha_attempts = {}
 app = FastAPI()
 application = Application.builder().token(TOKEN).build()
 
+# Static keyword responses
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
     "PutVideoTriggerKeywordHere": "PutMp4FileNameHere.mp4",
@@ -185,11 +186,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         message_text = update.message.text.lower()
         chat_id = update.message.chat_id
+
+        # Check dynamic filters
         if chat_id in filters_dict:
-            for keyword, response in filters_dict[chat_id].items():
+            for keyword, filter_data in filters_dict[chat_id].items():
                 if re.search(rf"(?:^|\s){re.escape('/' + keyword)}(?:\s|$)|\b{re.escape(keyword)}\b", message_text):
-                    await update.message.reply_text(response)
-                    return
+                    # Handle old-style filters (strings)
+                    if isinstance(filter_data, str):
+                        await update.message.reply_text(filter_data)
+                        return
+
+                    # Handle new-style filters (dictionaries)
+                    if isinstance(filter_data, dict):
+                        # Send text response if present
+                        if filter_data.get("text"):
+                            await update.message.reply_text(filter_data["text"])
+
+                        # Send media response if present
+                        media = filter_data.get("media")
+                        if media:
+                            media_type = media["type"]
+                            file_id = media["file_id"]
+                            if media_type == "photo":
+                                await update.message.reply_photo(photo=file_id)
+                            elif media_type == "video":
+                                await update.message.reply_video(video=file_id)
+                            elif media_type == "audio":
+                                await update.message.reply_audio(audio=file_id)
+                            elif media_type == "animation":
+                                await update.message.reply_animation(animation=file_id)
+                        return
+
+        # Check static keyword responses
         for keyword, media_file in keyword_responses.items():
             if keyword in message_text:
                 if not os.path.exists(media_file):
@@ -207,20 +235,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 break
     except Exception as e:
         logger.error(f"Message error: {e}")
-
-async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not update.message or not update.message.text:
-            return
-        message_text = update.message.text.lower()
-        chat_id = update.message.chat_id
-        if chat_id in filters_dict:
-            for keyword, response in filters_dict[chat_id].items():
-                if re.match(rf"^{re.escape('/' + keyword)}$", message_text):
-                    await update.message.reply_text(response)
-                    return
-    except Exception as e:
-        logger.error(f"Filter error: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -322,15 +336,31 @@ async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
                 keyword = context.args[0].lower()
-                response = " ".join(context.args[1:])
+                response_text = " ".join(context.args[1:]) if len(context.args) > 1 else None
                 chat_id = update.message.chat_id
+
+                # Extract media if present
+                media_info = None
+                if update.message.photo:
+                    media_info = {"type": "photo", "file_id": update.message.photo[-1].file_id}
+                elif update.message.video:
+                    media_info = {"type": "video", "file_id": update.message.video.file_id}
+                elif update.message.audio:
+                    media_info = {"type": "audio", "file_id": update.message.audio.file_id}
+                elif update.message.animation:
+                    media_info = {"type": "animation", "file_id": update.message.animation.file_id}
+
+                # Create filter entry
+                filter_entry = {"text": response_text, "media": media_info}
+
                 if chat_id not in filters_dict:
                     filters_dict[chat_id] = {}
-                filters_dict[chat_id][keyword] = response
+                filters_dict[chat_id][keyword] = filter_entry
                 save_filters()
+
                 await update.message.reply_text(f"Filter '{keyword}' added ✅")
             except IndexError:
-                await update.message.reply_text("Usage: /addsolexafilter keyword response")
+                await update.message.reply_text("Usage: /addsolexafilter keyword [response_text] (optional media)")
         else:
             await update.message.reply_text("No permission ❌")
     else:
@@ -342,7 +372,15 @@ async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id = update.message.chat_id
             filters_list = filters_dict.get(chat_id, {})
             if filters_list:
-                await update.message.reply_text(f"Filters:\n{chr(10).join([f'{k}: {v}' for k, v in filters_list.items()])}")
+                response = "Filters:\n"
+                for keyword, filter_data in filters_list.items():
+                    response += f"{keyword}: "
+                    if filter_data.get("text"):
+                        response += f"text='{filter_data['text']}' "
+                    if filter_data.get("media"):
+                        response += f"media={filter_data['media']['type']}"
+                    response += "\n"
+                await update.message.reply_text(response)
             else:
                 await update.message.reply_text("No filters set")
         else:
@@ -381,7 +419,6 @@ application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
 # FASTAPI WEBHOOK
