@@ -49,9 +49,9 @@ def load_filters():
                     chat_id = int(chat_id)
                     filters_dict[chat_id] = {}
                     for k, v in filters.items():
-                        if isinstance(v, str):  # Legacy text filter
+                        if isinstance(v, str):
                             filters_dict[chat_id][k] = v
-                        elif isinstance(v, dict) and 'type' in v and 'file_id' in v:  # New media filter
+                        elif isinstance(v, dict) and 'type' in v and 'file_id' in v:
                             filters_dict[chat_id][k] = v
                         else:
                             logger.warning(f"Invalid filter format for {k} in chat {chat_id}, skipping")
@@ -138,7 +138,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
             captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id}
 
             keyboard = [
-                [InlineKeyboardButton(str(opt), callback_data=f"caption_{user_id}_{opt}")]
+                [InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")]
                 for opt in options
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -217,15 +217,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if isinstance(response, dict) and 'type' in response and 'file_id' in response:
                         media_type = response['type']
                         file_id = response['file_id']
+                        text = response.get('text', '')
                         logger.info(f"Triggering media filter: {keyword} with {media_type}")
                         if media_type == 'photo':
-                            await update.message.reply_photo(photo=file_id)
+                            await update.message.reply_photo(photo=file_id, caption=text)
                         elif media_type == 'video':
-                            await update.message.reply_video(video=file_id, supports_streaming=True)
+                            await update.message.reply_video(video=file_id, caption=text, supports_streaming=True)
                         elif media_type == 'audio':
-                            await update.message.reply_audio(audio=file_id)
+                            await update.message.reply_audio(audio=file_id, caption=text)
                         elif media_type == 'animation':
-                            await update.message.reply_animation(animation=file_id)
+                            await update.message.reply_animation(animation=file_id, caption=text)
                     elif isinstance(response, str):
                         logger.info(f"Triggering text filter: {keyword}")
                         await update.message.reply_text(response)
@@ -266,15 +267,16 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
                     if isinstance(response, dict) and 'type' in response and 'file_id' in response:
                         media_type = response['type']
                         file_id = response['file_id']
+                        text = response.get('text', '')
                         logger.info(f"Command filter: {keyword} with {media_type}")
                         if media_type == 'photo':
-                            await update.message.reply_photo(photo=file_id)
+                            await update.message.reply_photo(photo=file_id, caption=text)
                         elif media_type == 'video':
-                            await update.message.reply_video(video=file_id, supports_streaming=True)
+                            await update.message.reply_video(video=file_id, caption=text, supports_streaming=True)
                         elif media_type == 'audio':
-                            await update.message.reply_audio(audio=file_id)
+                            await update.message.reply_audio(audio=file_id, caption=text)
                         elif media_type == 'animation':
-                            await update.message.reply_animation(animation=file_id)
+                            await update.message.reply_animation(animation=file_id, caption=text)
                     elif isinstance(response, str):
                         logger.info(f"Command text filter: {keyword}")
                         await update.message.reply_text(response)
@@ -290,7 +292,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Keywords: audio/video/profits/etc → media files\n"
         "- New members must solve captcha\n"
         "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, etc\n"
-        "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword'\n"
+        "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
         "- Reply to messages to target users\n"
         "- Contact admin for help"
     )
@@ -386,62 +388,81 @@ async def mute30(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mute1hr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await mute_user(update, context, timedelta(hours=1))
 
-async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             await update.message.reply_text("No permission ❌")
             return
 
         chat_id = update.message.chat_id
-        logger.info(f"Processing /addsolexafilter in chat {chat_id}")
+        logger.info(f"Processing /addsolexafilter (text) in chat {chat_id}")
 
-        # Check if message has text (command + args)
-        if not update.message.text:
-            await update.message.reply_text("Please provide a command with a keyword")
-            logger.warning("No text in message")
+        if not context.args or len(context.args) < 2:
+            await update.message.reply_text("Usage: /addsolexafilter keyword text")
+            logger.warning("Insufficient arguments for text filter")
             return
 
-        command_text = update.message.text.lower()
-        args = command_text.split()
-        if len(args) < 2:
-            await update.message.reply_text("Usage: /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword'")
-            logger.warning("Insufficient arguments")
-            return
-
-        keyword = args[1]
-        response_text = " ".join(args[2:]) if len(args) > 2 else None
+        keyword = context.args[0].lower()
+        response_text = " ".join(context.args[1:])
 
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
 
-        # Check for media
+        filters_dict[chat_id][keyword] = response_text
+        save_filters()
+        await update.message.reply_text(f"Text filter '{keyword}' added ✅")
+        logger.info(f"Added text filter '{keyword}'")
+    else:
+        await update.message.reply_text("Group-only command ❌")
+
+async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type != "private":
+        if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+            await update.message.reply_text("No permission ❌")
+            return
+
+        chat_id = update.message.chat_id
+        logger.info(f"Processing media message in chat {chat_id}")
+
+        if not update.message.caption or not update.message.caption.startswith('/addsolexafilter'):
+            return  # Silently ignore non-command media
+
+        caption = update.message.caption.lower()
+        args = caption.split()
+        if len(args) < 2:
+            await update.message.reply_text("Usage: Send media with caption '/addsolexafilter keyword [text]'")
+            logger.warning("Insufficient arguments in media caption")
+            return
+
+        keyword = args[1]
+        response_text = " ".join(args[2:]) if len(args) > 2 else ""
+
+        if chat_id not in filters_dict:
+            filters_dict[chat_id] = {}
+
         if update.message.photo:
-            file_id = update.message.photo[-1].file_id  # Largest size
-            filters_dict[chat_id][keyword] = {'type': 'photo', 'file_id': file_id}
+            file_id = update.message.photo[-1].file_id
+            filters_dict[chat_id][keyword] = {'type': 'photo', 'file_id': file_id, 'text': response_text}
             await update.message.reply_text(f"Photo filter '{keyword}' added ✅")
-            logger.info(f"Added photo filter '{keyword}' with file_id {file_id}")
+            logger.info(f"Added photo filter '{keyword}' with file_id {file_id} and text '{response_text}'")
         elif update.message.video:
             file_id = update.message.video.file_id
-            filters_dict[chat_id][keyword] = {'type': 'video', 'file_id': file_id}
+            filters_dict[chat_id][keyword] = {'type': 'video', 'file_id': file_id, 'text': response_text}
             await update.message.reply_text(f"Video filter '{keyword}' added ✅")
-            logger.info(f"Added video filter '{keyword}' with file_id {file_id}")
+            logger.info(f"Added video filter '{keyword}' with file_id {file_id} and text '{response_text}'")
         elif update.message.audio:
             file_id = update.message.audio.file_id
-            filters_dict[chat_id][keyword] = {'type': 'audio', 'file_id': file_id}
+            filters_dict[chat_id][keyword] = {'type': 'audio', 'file_id': file_id, 'text': response_text}
             await update.message.reply_text(f"Audio filter '{keyword}' added ✅")
-            logger.info(f"Added audio filter '{keyword}' with file_id {file_id}")
+            logger.info(f"Added audio filter '{keyword}' with file_id {file_id} and text '{response_text}'")
         elif update.message.animation:
             file_id = update.message.animation.file_id
-            filters_dict[chat_id][keyword] = {'type': 'animation', 'file_id': file_id}
+            filters_dict[chat_id][keyword] = {'type': 'animation', 'file_id': file_id, 'text': response_text}
             await update.message.reply_text(f"GIF filter '{keyword}' added ✅")
-            logger.info(f"Added GIF filter '{keyword}' with file_id {file_id}")
-        elif response_text:
-            filters_dict[chat_id][keyword] = response_text
-            await update.message.reply_text(f"Text filter '{keyword}' added ✅")
-            logger.info(f"Added text filter '{keyword}'")
+            logger.info(f"Added GIF filter '{keyword}' with file_id {file_id} and text '{response_text}'")
         else:
-            await update.message.reply_text("Please provide text or attach media with the command")
-            logger.warning("No media or text provided")
+            await update.message.reply_text("No supported media type detected")
+            logger.warning("No supported media type in message")
             return
 
         save_filters()
@@ -457,7 +478,8 @@ async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filter_texts = []
                 for k, v in filters_list.items():
                     if isinstance(v, dict) and 'type' in v:
-                        filter_texts.append(f"{k}: [{v['type']}]")
+                        text_part = f" - {v['text']}" if v.get('text') else ""
+                        filter_texts.append(f"{k}: [{v['type']}]{text_part}")
                     elif isinstance(v, str):
                         filter_texts.append(f"{k}: {v}")
                     else:
@@ -497,7 +519,8 @@ application.add_handler(CommandHandler("kick", kick_user))
 application.add_handler(CommandHandler("mute10", mute10))
 application.add_handler(CommandHandler("mute30", mute30))
 application.add_handler(CommandHandler("mute1hr", mute1hr))
-application.add_handler(CommandHandler("addsolexafilter", add_filter))
+application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
+application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION, add_media_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
@@ -509,6 +532,7 @@ application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     data = await request.json()
+    logger.info(f"Received update: {json.dumps(data, indent=2)}")
     update = Update.de_json(data, application.bot)
     await application.process_update(update)
     return {"status": "ok"}
