@@ -26,6 +26,15 @@ captcha_attempts = {}
 app = FastAPI()
 application = Application.builder().token(TOKEN).build()
 
+# Static keyword responses
+keyword_responses = {
+    "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
+    "PutVideoTriggerKeywordHere": "PutMp4FileNameHere.mp4",
+    "profits": "PROFITS.jpg",
+    "slut": "SLUT.jpg",
+    "launch cat": "launchcat.gif"
+}
+
 # Persistent storage setup
 FILTERS_FILE = "/data/filters.json"
 filters_dict = {}
@@ -55,111 +64,53 @@ def save_filters():
     except Exception as e:
         logger.error(f"Error saving filters: {e}")
 
-async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type != "private":
-        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-            try:
-                keyword = context.args[0].lower()
-                response_text = " ".join(context.args[1:]) if len(context.args) > 1 else None
-                chat_id = update.message.chat_id
+def generate_captcha():
+    num1 = random.randint(1, 10)
+    num2 = random.randint(1, 10)
+    correct_answer = num1 + num2
+    wrong_answers = set()
+    while len(wrong_answers) < 3:
+        wrong = random.randint(1, 20)
+        if wrong != correct_answer:
+            wrong_answers.add(wrong)
+    options = list(wrong_answers) + [correct_answer]
+    random.shuffle(options)
+    return f"What is {num1} + {num2}?", options, correct_answer
 
-                # Extract media if present
-                media_info = None
-                if update.message.photo:
-                    media_info = {"type": "photo", "file_id": update.message.photo[-1].file_id}
-                elif update.message.video:
-                    media_info = {"type": "video", "file_id": update.message.video.file_id}
-                elif update.message.audio:
-                    media_info = {"type": "audio", "file_id": update.message.audio.file_id}
-                elif update.message.animation:
-                    media_info = {"type": "animation", "file_id": update.message.animation.file_id}
-
-                # Create filter entry
-                filter_entry = {"text": response_text, "media": media_info}
-
-                if chat_id not in filters_dict:
-                    filters_dict[chat_id] = {}
-                filters_dict[chat_id][keyword] = filter_entry
-                save_filters()
-
-                await update.message.reply_text(f"Filter '{keyword}' added ✅")
-            except IndexError:
-                await update.message.reply_text("Usage: /addsolexafilter keyword [response_text] (optional media)")
-        else:
-            await update.message.reply_text("No permission ❌")
-    else:
-        await update.message.reply_text("Group-only command ❌")
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEFAULT_TYPE) -> int or None:
     try:
-        if not update.message or not update.message.text:
-            return
-        message_text = update.message.text.lower()
-        chat_id = update.message.chat_id
-        if chat_id in filters_dict:
-            for keyword, filter_data in filters_dict[chat_id].items():
-                if re.search(rf"(?:^|\s){re.escape('/' + keyword)}(?:\s|$)|\b{re.escape(keyword)}\b", message_text):
-                    # Send text response if present
-                    if filter_data.get("text"):
-                        await update.message.reply_text(filter_data["text"])
-
-                    # Send media response if present
-                    media = filter_data.get("media")
-                    if media:
-                        media_type = media["type"]
-                        file_id = media["file_id"]
-                        if media_type == "photo":
-                            await update.message.reply_photo(photo=file_id)
-                        elif media_type == "video":
-                            await update.message.reply_video(video=file_id)
-                        elif media_type == "audio":
-                            await update.message.reply_audio(audio=file_id)
-                        elif media_type == "animation":
-                            await update.message.reply_animation(animation=file_id)
-                    return
-    except Exception as e:
-        logger.error(f"Message error: {e}")
-
-async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type != "private":
-        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-            chat_id = update.message.chat_id
-            filters_list = filters_dict.get(chat_id, {})
-            if filters_list:
-                response = "Filters:\n"
-                for keyword, filter_data in filters_list.items():
-                    response += f"{keyword}: "
-                    if filter_data.get("text"):
-                        response += f"text='{filter_data['text']}' "
-                    if filter_data.get("media"):
-                        response += f"media={filter_data['media']['type']}"
-                    response += "\n"
-                await update.message.reply_text(response)
-            else:
-                await update.message.reply_text("No filters set")
-        else:
-            await update.message.reply_text("No permission ❌")
-    else:
-        await update.message.reply_text("Group-only command ❌")
-
-async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type != "private":
-        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        if target_user.startswith("@"):
+            username = target_user[1:].lower()
+            logger.info(f"Resolving username: @{username} in chat {chat_id}")
             try:
-                keyword = context.args[0].lower()
-                chat_id = update.message.chat_id
-                if chat_id in filters_dict and keyword in filters_dict[chat_id]:
-                    del filters_dict[chat_id][keyword]
-                    save_filters()
-                    await update.message.reply_text(f"Filter '{keyword}' removed ✅")
-                else:
-                    await update.message.reply_text("Filter not found ❌")
-            except IndexError:
-                await update.message.reply_text("Usage: /removesolexafilter keyword")
+                async for member in context.bot.get_chat_members(chat_id):
+                    member_username = member.user.username
+                    if member_username and member_username.lower() == username:
+                        logger.info(f"Found user @{username} with ID {member.user.id}")
+                        return member.user.id
+                logger.warning(f"User @{username} not found in member list")
+                return None
+            except Forbidden:
+                logger.error("Bot lacks permission to view member list")
+                return None
+            except Exception as e:
+                logger.error(f"Error searching members: {e}")
+                return None
         else:
-            await update.message.reply_text("No permission ❌")
-    else:
-        await update.message.reply_text("Group-only command ❌")
+            user_id = int(target_user)
+            logger.info(f"Using provided user ID: {user_id}")
+            return user_id
+    except ValueError:
+        logger.error(f"Invalid user format: {target_user}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error resolving user: {e}")
+        return None
+
+async def get_user_id_from_reply(update: Update) -> int or None:
+    if update.message and update.message.reply_to_message:
+        return update.message.reply_to_message.from_user.id
+    return None
 
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -228,6 +179,55 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Incorrect answer")
     except Exception as e:
         logger.error(f"Captcha error: {e}")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not update.message or not update.message.text:
+            return
+        message_text = update.message.text.lower()
+        chat_id = update.message.chat_id
+
+        # Check dynamic filters
+        if chat_id in filters_dict:
+            for keyword, filter_data in filters_dict[chat_id].items():
+                if re.search(rf"(?:^|\s){re.escape('/' + keyword)}(?:\s|$)|\b{re.escape(keyword)}\b", message_text):
+                    # Send text response if present
+                    if filter_data.get("text"):
+                        await update.message.reply_text(filter_data["text"])
+
+                    # Send media response if present
+                    media = filter_data.get("media")
+                    if media:
+                        media_type = media["type"]
+                        file_id = media["file_id"]
+                        if media_type == "photo":
+                            await update.message.reply_photo(photo=file_id)
+                        elif media_type == "video":
+                            await update.message.reply_video(video=file_id)
+                        elif media_type == "audio":
+                            await update.message.reply_audio(audio=file_id)
+                        elif media_type == "animation":
+                            await update.message.reply_animation(animation=file_id)
+                    return
+
+        # Check static keyword responses
+        for keyword, media_file in keyword_responses.items():
+            if keyword in message_text:
+                if not os.path.exists(media_file):
+                    await update.message.reply_text(f"File missing: {media_file}")
+                    return
+                with open(media_file, 'rb') as media:
+                    if media_file.endswith('.mp3'):
+                        await update.message.reply_audio(audio=media)
+                    elif media_file.endswith('.mp4'):
+                        await update.message.reply_video(video=media, supports_streaming=True, width=1280, height=720)
+                    elif media_file.endswith('.jpg'):
+                        await update.message.reply_photo(photo=media)
+                    elif media_file.endswith('.gif'):
+                        await update.message.reply_animation(animation=media)
+                break
+    except Exception as e:
+        logger.error(f"Message error: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -324,53 +324,81 @@ async def mute30(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mute1hr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await mute_user(update, context, timedelta(hours=1))
 
-async def get_user_id_from_reply(update: Update) -> int or None:
-    if update.message and update.message.reply_to_message:
-        return update.message.reply_to_message.from_user.id
-    return None
-
-async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEFAULT_TYPE) -> int or None:
-    try:
-        if target_user.startswith("@"):
-            username = target_user[1:].lower()
-            logger.info(f"Resolving username: @{username} in chat {chat_id}")
+async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type != "private":
+        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             try:
-                async for member in context.bot.get_chat_members(chat_id):
-                    member_username = member.user.username
-                    if member_username and member_username.lower() == username:
-                        logger.info(f"Found user @{username} with ID {member.user.id}")
-                        return member.user.id
-                logger.warning(f"User @{username} not found in member list")
-                return None
-            except Forbidden:
-                logger.error("Bot lacks permission to view member list")
-                return None
-            except Exception as e:
-                logger.error(f"Error searching members: {e}")
-                return None
-        else:
-            user_id = int(target_user)
-            logger.info(f"Using provided user ID: {user_id}")
-            return user_id
-    except ValueError:
-        logger.error(f"Invalid user format: {target_user}")
-        return None
-    except Exception as e:
-        logger.error(f"Unexpected error resolving user: {e}")
-        return None
+                keyword = context.args[0].lower()
+                response_text = " ".join(context.args[1:]) if len(context.args) > 1 else None
+                chat_id = update.message.chat_id
 
-def generate_captcha():
-    num1 = random.randint(1, 10)
-    num2 = random.randint(1, 10)
-    correct_answer = num1 + num2
-    wrong_answers = set()
-    while len(wrong_answers) < 3:
-        wrong = random.randint(1, 20)
-        if wrong != correct_answer:
-            wrong_answers.add(wrong)
-    options = list(wrong_answers) + [correct_answer]
-    random.shuffle(options)
-    return f"What is {num1} + {num2}?", options, correct_answer
+                # Extract media if present
+                media_info = None
+                if update.message.photo:
+                    media_info = {"type": "photo", "file_id": update.message.photo[-1].file_id}
+                elif update.message.video:
+                    media_info = {"type": "video", "file_id": update.message.video.file_id}
+                elif update.message.audio:
+                    media_info = {"type": "audio", "file_id": update.message.audio.file_id}
+                elif update.message.animation:
+                    media_info = {"type": "animation", "file_id": update.message.animation.file_id}
+
+                # Create filter entry
+                filter_entry = {"text": response_text, "media": media_info}
+
+                if chat_id not in filters_dict:
+                    filters_dict[chat_id] = {}
+                filters_dict[chat_id][keyword] = filter_entry
+                save_filters()
+
+                await update.message.reply_text(f"Filter '{keyword}' added ✅")
+            except IndexError:
+                await update.message.reply_text("Usage: /addsolexafilter keyword [response_text] (optional media)")
+        else:
+            await update.message.reply_text("No permission ❌")
+    else:
+        await update.message.reply_text("Group-only command ❌")
+
+async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type != "private":
+        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+            chat_id = update.message.chat_id
+            filters_list = filters_dict.get(chat_id, {})
+            if filters_list:
+                response = "Filters:\n"
+                for keyword, filter_data in filters_list.items():
+                    response += f"{keyword}: "
+                    if filter_data.get("text"):
+                        response += f"text='{filter_data['text']}' "
+                    if filter_data.get("media"):
+                        response += f"media={filter_data['media']['type']}"
+                    response += "\n"
+                await update.message.reply_text(response)
+            else:
+                await update.message.reply_text("No filters set")
+        else:
+            await update.message.reply_text("No permission ❌")
+    else:
+        await update.message.reply_text("Group-only command ❌")
+
+async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type != "private":
+        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+            try:
+                keyword = context.args[0].lower()
+                chat_id = update.message.chat_id
+                if chat_id in filters_dict and keyword in filters_dict[chat_id]:
+                    del filters_dict[chat_id][keyword]
+                    save_filters()
+                    await update.message.reply_text(f"Filter '{keyword}' removed ✅")
+                else:
+                    await update.message.reply_text("Filter not found ❌")
+            except IndexError:
+                await update.message.reply_text("Usage: /removesolexafilter keyword")
+        else:
+            await update.message.reply_text("No permission ❌")
+    else:
+        await update.message.reply_text("Group-only command ❌")
 
 # HANDLERS
 application.add_handler(CommandHandler("help", help_command))
@@ -384,7 +412,6 @@ application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
 # FASTAPI WEBHOOK
