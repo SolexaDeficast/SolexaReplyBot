@@ -375,10 +375,13 @@ async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 response = "Filters:\n"
                 for keyword, filter_data in filters_list.items():
                     response += f"{keyword}: "
-                    if filter_data.get("text"):
-                        response += f"text='{filter_data['text']}' "
-                    if filter_data.get("media"):
-                        response += f"media={filter_data['media']['type']}"
+                    if isinstance(filter_data, str):
+                        response += f"text='{filter_data}'"
+                    elif isinstance(filter_data, dict):
+                        if filter_data.get("text"):
+                            response += f"text='{filter_data['text']}' "
+                        if filter_data.get("media"):
+                            response += f"media={filter_data['media']['type']}"
                     response += "\n"
                 await update.message.reply_text(response)
             else:
