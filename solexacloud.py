@@ -279,6 +279,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await update.message.reply_audio(audio=file_id, caption=escaped_text, parse_mode='MarkdownV2')
                         elif media_type == 'animation':
                             await update.message.reply_animation(animation=file_id, caption=escaped_text, parse_mode='MarkdownV2')
+                        elif media_type == 'voice':
+                            await update.message.reply_voice(voice=file_id, caption=escaped_text, parse_mode='MarkdownV2')
                     elif isinstance(response, str):
                         logger.info(f"Triggering text filter: {keyword}, raw text: {repr(response)}")
                         await update.message.reply_text(response, parse_mode='MarkdownV2')
@@ -327,6 +329,8 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
                             await update.message.reply_audio(audio=file_id, caption=escaped_text, parse_mode='MarkdownV2')
                         elif media_type == 'animation':
                             await update.message.reply_animation(animation=file_id, caption=escaped_text, parse_mode='MarkdownV2')
+                        elif media_type == 'voice':
+                            await update.message.reply_voice(voice=file_id, caption=escaped_text, parse_mode='MarkdownV2')
                     elif isinstance(response, str):
                         logger.info(f"Command text filter: {keyword}, raw text: {repr(response)}")
                         await update.message.reply_text(response, parse_mode='MarkdownV2')
@@ -555,6 +559,11 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             filters_dict[chat_id][keyword] = {'type': 'animation', 'file_id': file_id, 'text': response_text}
             await update.message.reply_text(f"GIF filter '{keyword}' added ✅")
             logger.info(f"Added GIF filter '{keyword}' with file_id {file_id} and text: {repr(response_text)}")
+        elif update.message.voice:
+            file_id = update.message.voice.file_id
+            filters_dict[chat_id][keyword] = {'type': 'voice', 'file_id': file_id, 'text': response_text}
+            await update.message.reply_text(f"Voice filter '{keyword}' added ✅")
+            logger.info(f"Added voice filter '{keyword}' with file_id {file_id} and text: {repr(response_text)}")
         else:
             await update.message.reply_text("No supported media type detected")
             logger.warning("No supported media type in message")
@@ -613,7 +622,7 @@ application.add_handler(CommandHandler("mute30", mute30))
 application.add_handler(CommandHandler("mute1hr", mute1hr))
 application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
-application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION, add_media_filter))
+application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, add_media_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
