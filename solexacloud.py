@@ -120,7 +120,9 @@ def apply_entities_to_caption(caption, entities):
             result[start:start] = list(link)
             offset_shift += len(link) - entity.length
     
-    return ''.join(result)
+    final_text = ''.join(result)
+    logger.info(f"Text after applying entities: {repr(final_text)}")
+    return final_text
 
 def generate_captcha():
     num1 = random.randint(1, 10)
@@ -461,8 +463,12 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.photo:
             file_id = update.message.photo[-1].file_id
             filters_dict[chat_id][keyword] = {'type': 'photo', 'file_id': file_id, 'text': response_text}
-            await update.message.reply_text(f"Photo filter '{keyword}' added ✅")
-            logger.info(f"Added photo filter '{keyword}' with file_id {file_id} and text: {repr(response_text)}")
+            try:
+                await update.message.reply_text(f"Photo filter '{keyword}' added ✅")
+                logger.info(f"Added photo filter '{keyword}' with file_id {file_id} and text: {repr(response_text)}")
+            except BadRequest as e:
+                logger.error(f"Failed to send confirmation message: {e}")
+                await update.message.reply_text(f"Filter set, but failed to send confirmation: {str(e)}")
         elif update.message.video:
             file_id = update.message.video.file_id
             filters_dict[chat_id][keyword] = {'type': 'video', 'file_id': file_id, 'text': response_text}
