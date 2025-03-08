@@ -208,34 +208,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message or not update.message.text:
             return
 
-        message_text = update.message.text.lower()
+        message_text = update.message.text.strip().lower()
         chat_id = update.message.chat_id
 
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
-                if re.search(rf"(?:^|\s){re.escape('/' + keyword)}(?:\s|$)|\b{re.escape(keyword)}\b", message_text):
+                # Match only if the message is exactly the keyword (with or without slash)
+                if message_text == keyword or message_text == f"/{keyword}":
                     if isinstance(response, dict) and 'type' in response and 'file_id' in response:
                         media_type = response['type']
                         file_id = response['file_id']
                         text = response.get('text', '')
                         logger.info(f"Triggering media filter: {keyword} with {media_type}")
                         if media_type == 'photo':
-                            await update.message.reply_photo(photo=file_id, caption=text)
+                            await update.message.reply_photo(photo=file_id, caption=text, parse_mode='MarkdownV2')
                         elif media_type == 'video':
-                            await update.message.reply_video(video=file_id, caption=text, supports_streaming=True)
+                            await update.message.reply_video(video=file_id, caption=text, parse_mode='MarkdownV2', supports_streaming=True)
                         elif media_type == 'audio':
-                            await update.message.reply_audio(audio=file_id, caption=text)
+                            await update.message.reply_audio(audio=file_id, caption=text, parse_mode='MarkdownV2')
                         elif media_type == 'animation':
-                            await update.message.reply_animation(animation=file_id, caption=text)
+                            await update.message.reply_animation(animation=file_id, caption=text, parse_mode='MarkdownV2')
                     elif isinstance(response, str):
                         logger.info(f"Triggering text filter: {keyword}")
-                        await update.message.reply_text(response)
+                        await update.message.reply_text(response, parse_mode='MarkdownV2')
                     else:
                         logger.warning(f"Invalid response format for {keyword}")
                     return
 
         for keyword, media_file in keyword_responses.items():
-            if keyword in message_text:
+            if message_text == keyword:  # Match standalone for hardcoded keywords too
                 if not os.path.exists(media_file):
                     await update.message.reply_text(f"File missing: {media_file}")
                     return
@@ -258,28 +259,28 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
         if not update.message or not update.message.text:
             return
 
-        message_text = update.message.text.lower()
+        message_text = update.message.text.strip().lower()
         chat_id = update.message.chat_id
 
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
-                if re.match(rf"^{re.escape('/' + keyword)}$", message_text):
+                if message_text == f"/{keyword}":  # Exact match for commands
                     if isinstance(response, dict) and 'type' in response and 'file_id' in response:
                         media_type = response['type']
                         file_id = response['file_id']
                         text = response.get('text', '')
                         logger.info(f"Command filter: {keyword} with {media_type}")
                         if media_type == 'photo':
-                            await update.message.reply_photo(photo=file_id, caption=text)
+                            await update.message.reply_photo(photo=file_id, caption=text, parse_mode='MarkdownV2')
                         elif media_type == 'video':
-                            await update.message.reply_video(video=file_id, caption=text, supports_streaming=True)
+                            await update.message.reply_video(video=file_id, caption=text, parse_mode='MarkdownV2', supports_streaming=True)
                         elif media_type == 'audio':
-                            await update.message.reply_audio(audio=file_id, caption=text)
+                            await update.message.reply_audio(audio=file_id, caption=text, parse_mode='MarkdownV2')
                         elif media_type == 'animation':
-                            await update.message.reply_animation(animation=file_id, caption=text)
+                            await update.message.reply_animation(animation=file_id, caption=text, parse_mode='MarkdownV2')
                     elif isinstance(response, str):
                         logger.info(f"Command text filter: {keyword}")
-                        await update.message.reply_text(response)
+                        await update.message.reply_text(response, parse_mode='MarkdownV2')
                     else:
                         logger.warning(f"Invalid command response format for {keyword}")
                     return
@@ -293,10 +294,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- New members must solve captcha\n"
         "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, etc\n"
         "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
+        "- Supports *bold*, _italics_, [hyperlinks](https://example.com), and links\n"
+        "- Filters trigger only on standalone keywords (e.g., 'x' or '/x')\n"
         "- Reply to messages to target users\n"
         "- Contact admin for help"
     )
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(help_text, parse_mode='MarkdownV2')
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
@@ -427,15 +430,15 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message.caption or not update.message.caption.startswith('/addsolexafilter'):
             return  # Silently ignore non-command media
 
-        caption = update.message.caption.lower()
-        args = caption.split()
+        caption = update.message.caption
+        args = caption.split(maxsplit=2)  # Split into command, keyword, and rest
         if len(args) < 2:
             await update.message.reply_text("Usage: Send media with caption '/addsolexafilter keyword [text]'")
             logger.warning("Insufficient arguments in media caption")
             return
 
-        keyword = args[1]
-        response_text = " ".join(args[2:]) if len(args) > 2 else ""
+        keyword = args[1].lower()
+        response_text = args[2] if len(args) > 2 else ""  # Preserve original formatting
 
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
