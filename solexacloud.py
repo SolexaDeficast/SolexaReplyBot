@@ -7,7 +7,7 @@ from datetime import timedelta
 from fastapi import FastAPI, Request
 import uvicorn
 from telegram import (
-    Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, User
+    Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, User, MessageEntity
 )
 from telegram.ext import (
     Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler, CommandHandler
@@ -112,7 +112,6 @@ def apply_entities_to_caption(caption, entities):
             result.insert(end + 2, "__")
             offset_shift += 4
         elif entity.type == "url" and entity.url:
-            # Convert to [text](url) format
             text = caption[entity.offset:entity.offset + entity.length]
             result[start:end] = [f"[{text}]({entity.url})"]
             offset_shift += len(f"[{text}]({entity.url})") - entity.length
@@ -412,7 +411,6 @@ async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         keyword = context.args[0].lower()
         response_text = " ".join(context.args[1:])
-        # For text commands, assume raw input is MarkdownV2
         response_text = escape_markdown_v2(response_text)
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
@@ -439,16 +437,21 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning("Insufficient arguments in media caption")
             return
         keyword = args[1].lower()
-        # Extract text after command and keyword
         raw_text = args[2] if len(args) > 2 else ""
-        # Apply entities to reconstruct MarkdownV2
         entities = update.message.caption_entities or []
-        # Remove the command portion from entities' offsets
         command_length = len(f"/addsolexafilter {keyword} ")
-        filtered_entities = [e for e in entities if e.offset >= command_length]
-        for e in filtered_entities:
-            e.offset -= command_length  # Adjust offsets
-        response_text = apply_entities_to_caption(raw_text, filtered_entities)
+        # Create new entities with adjusted offsets
+        adjusted_entities = [
+            MessageEntity(
+                type=e.type,
+                offset=e.offset - command_length,
+                length=e.length,
+                url=e.url
+            )
+            for e in entities
+            if e.offset >= command_length
+        ]
+        response_text = apply_entities_to_caption(raw_text, adjusted_entities)
         response_text = escape_markdown_v2(response_text)
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
