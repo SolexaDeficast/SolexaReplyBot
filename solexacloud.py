@@ -94,7 +94,7 @@ def escape_markdown_v2(text):
     return escaped_text
 
 def apply_entities_to_caption(caption, entities):
-    """Reconstruct MarkdownV2 text with precise entity wrapping."""
+    """Reconstruct MarkdownV2 text with precise entity wrapping using single markers."""
     if not entities or not caption:
         return caption
     
@@ -111,9 +111,9 @@ def apply_entities_to_caption(caption, entities):
             
         entity_text = ''.join(result[start:end])
         if entity.type == "bold":
-            new_text = f"**{entity_text}**"
+            new_text = f"*{entity_text}*"  # Single asterisk for bold
         elif entity.type == "italic":
-            new_text = f"__{entity_text}__"
+            new_text = f"_{entity_text}_"  # Single underscore for italic
         elif entity.type == "url" and entity.url:
             new_text = f"[{entity_text}]({entity.url})"
         else:
@@ -321,7 +321,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- New members must solve captcha\n"
         "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, etc\n"
         "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
-        "- Supports **bold**, __italics__, [hyperlinks](https://example.com), and links\n"
+        "- Supports *bold*, _italics_, [hyperlinks](https://example.com), and links (use single * and _ for filters)\n"
         "- Filters trigger only on standalone keywords (e.g., 'x' or '/x')\n"
         "- Reply to messages to target users\n"
         "- Contact admin for help"
