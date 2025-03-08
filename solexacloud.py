@@ -34,7 +34,6 @@ keyword_responses = {
     "launch cat": "launchcat.gif"
 }
 
-# Persistent storage setup
 FILTERS_FILE = "/data/filters.json"
 filters_dict = {}
 
@@ -74,34 +73,56 @@ def save_filters():
 
 def escape_markdown_v2(text):
     """Escape reserved MarkdownV2 characters in plain text, preserving valid formatting."""
-    # Reserved characters that need escaping in plain text
     reserved_chars = r"[-()~`>#+|=|{}.!]"
-    # Patterns for valid MarkdownV2 syntax to preserve
     patterns = [
         r'(\[.*?\]\(.*?\))',    # Hyperlinks: [text](url)
-        r'(\*\*[^\*]*\*\*)',    # Bold: **text** (non-greedy match)
-        r'(__[^_]*__)',         # Italics: __text__ (non-greedy match)
+        r'(\*\*[^\*]*\*\*)',    # Bold: **text**
+        r'(__[^_]*__)',         # Italics: __text__
     ]
-    # Combine patterns with reserved chars
     combined_pattern = '|'.join(patterns) + f'|({reserved_chars})'
     
     def replace_func(match):
-        # If it matches any valid syntax (groups 1-3), return unchanged
         for i in range(1, 4):
             if match.group(i):
                 return match.group(i)
-        # Otherwise, escape the reserved character (group 4)
         return '\\' + match.group(4)
     
     escaped_text = re.sub(combined_pattern, replace_func, text)
     logger.info(f"Escaped text: {repr(escaped_text)}")
     return escaped_text
 
+def apply_entities_to_caption(caption, entities):
+    """Reconstruct MarkdownV2 text from caption and entities."""
+    if not entities:
+        return caption
+    
+    result = list(caption)
+    offset_shift = 0
+    
+    for entity in sorted(entities, key=lambda e: e.offset):
+        start = entity.offset + offset_shift
+        end = start + entity.length
+        
+        if entity.type == "bold":
+            result.insert(start, "**")
+            result.insert(end + 2, "**")
+            offset_shift += 4
+        elif entity.type == "italic":
+            result.insert(start, "__")
+            result.insert(end + 2, "__")
+            offset_shift += 4
+        elif entity.type == "url" and entity.url:
+            # Convert to [text](url) format
+            text = caption[entity.offset:entity.offset + entity.length]
+            result[start:end] = [f"[{text}]({entity.url})"]
+            offset_shift += len(f"[{text}]({entity.url})") - entity.length
+    
+    return ''.join(result)
+
 def generate_captcha():
     num1 = random.randint(1, 10)
     num2 = random.randint(1, 10)
     correct_answer = num1 + num2
-
     wrong_answers = set()
     while len(wrong_answers) < 3:
         wrong = random.randint(1, 20)
@@ -116,7 +137,6 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
         if target_user.startswith("@"):
             username = target_user[1:].lower()
             logger.info(f"Resolving username: @{username} in chat {chat_id}")
-            
             try:
                 async for member in context.bot.get_chat_members(chat_id):
                     member_username = member.user.username
@@ -153,26 +173,14 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
             chat_id = update.message.chat_id
             user_id = member.id
             username = member.username or member.first_name
-
             logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
-
             permissions = ChatPermissions(can_send_messages=False)
             await context.bot.restrict_chat_member(chat_id, user_id, permissions)
-
             question, options, correct_answer = generate_captcha()
             captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id}
-
-            keyboard = [
-                [InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")]
-                for opt in options
-            ]
+            keyboard = [[InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")] for opt in options]
             reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"Welcome {username}! Please verify yourself.\n\n{question}",
-                reply_markup=reply_markup
-            )
+            await context.bot.send_message(chat_id=chat_id, text=f"Welcome {username}! Please verify yourself.\n\n{question}", reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Error handling new member event: {e}")
 
@@ -181,43 +189,31 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         user_id = query.from_user.id
         data = query.data.split("_")
-
         if len(data) != 3:
             return
-
         _, target_user_id, answer = data
         target_user_id = int(target_user_id)
         answer = int(answer)
-
         if user_id != target_user_id:
             await query.answer("❌ Unauthorized", show_alert=True)
             return
-
         if target_user_id not in captcha_attempts:
             await query.answer("Expired")
             return
-
         correct_answer = captcha_attempts[target_user_id]["answer"]
         chat_id = captcha_attempts[target_user_id]["chat_id"]
         attempts = captcha_attempts[target_user_id]["attempts"]
-
         if answer == correct_answer:
             permissions = ChatPermissions(
-                can_send_messages=True,
-                can_send_photos=True,
-                can_send_videos=True,
-                can_send_other_messages=True,
-                can_send_polls=True,
-                can_add_web_page_previews=True
+                can_send_messages=True, can_send_photos=True, can_send_videos=True,
+                can_send_other_messages=True, can_send_polls=True, can_add_web_page_previews=True
             )
-
             await context.bot.restrict_chat_member(chat_id, target_user_id, permissions)
             await query.message.edit_text("✅ Verified!")
             del captcha_attempts[target_user_id]
         else:
             attempts += 1
             captcha_attempts[target_user_id]["attempts"] = attempts
-
             if attempts >= 3:
                 await context.bot.ban_chat_member(chat_id, target_user_id)
                 await context.bot.unban_chat_member(chat_id, target_user_id)
@@ -232,10 +228,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message or not update.message.text:
             return
-
         message_text = update.message.text.strip().lower()
         chat_id = update.message.chat_id
-
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
                 if message_text == keyword or message_text == f"/{keyword}":
@@ -258,13 +252,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         logger.warning(f"Invalid response format for {keyword}")
                     return
-
         for keyword, media_file in keyword_responses.items():
             if message_text == keyword:
                 if not os.path.exists(media_file):
                     await update.message.reply_text(f"File missing: {media_file}")
                     return
-
                 with open(media_file, 'rb') as media:
                     if media_file.endswith('.mp3'):
                         await update.message.reply_audio(audio=media)
@@ -282,10 +274,8 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
     try:
         if not update.message or not update.message.text:
             return
-
         message_text = update.message.text.strip().lower()
         chat_id = update.message.chat_id
-
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
                 if message_text == f"/{keyword}":
@@ -337,11 +327,9 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         return
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
-                
                 if not user_id:
                     await update.message.reply_text(f"Error: User {target_user} not found")
                     return
-
                 await context.bot.ban_chat_member(update.message.chat_id, user_id)
                 await update.message.reply_text(f"User {target_user} banned ✅")
             except IndexError:
@@ -363,11 +351,9 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         return
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
-                 
                 if not user_id:
                     await update.message.reply_text(f"Error: User {target_user} not found")
                     return
-
                 await context.bot.ban_chat_member(update.message.chat_id, user_id)
                 await context.bot.unban_chat_member(update.message.chat_id, user_id, only_if_banned=True)
                 await update.message.reply_text("User kicked ✅")
@@ -390,11 +376,9 @@ async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration
                         return
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
-                 
                 if not user_id:
                     await update.message.reply_text(f"Error: User {target_user} not found")
                     return
-
                 permissions = ChatPermissions(can_send_messages=False)
                 until = update.message.date + duration
                 await context.bot.restrict_chat_member(update.message.chat_id, user_id, permissions, until_date=until)
@@ -420,22 +404,18 @@ async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             await update.message.reply_text("No permission ❌")
             return
-
         chat_id = update.message.chat_id
         logger.info(f"Processing /addsolexafilter (text) in chat {chat_id}")
-
         if not context.args or len(context.args) < 2:
             await update.message.reply_text("Usage: /addsolexafilter keyword text")
             logger.warning("Insufficient arguments for text filter")
             return
-
         keyword = context.args[0].lower()
         response_text = " ".join(context.args[1:])
+        # For text commands, assume raw input is MarkdownV2
         response_text = escape_markdown_v2(response_text)
-
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
-
         filters_dict[chat_id][keyword] = response_text
         save_filters()
         await update.message.reply_text(f"Text filter '{keyword}' added ✅")
@@ -447,28 +427,31 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         chat_id = update.message.chat_id
         logger.info(f"Processing media message in chat {chat_id}")
-
         if not update.message.caption or not update.message.caption.startswith('/addsolexafilter'):
-            return  # Silently ignore non-command media
-
+            return
         if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
             await update.message.reply_text("No permission ❌")
             return
-
         caption = update.message.caption
         args = caption.split(maxsplit=2)
         if len(args) < 2:
             await update.message.reply_text("Usage: Send media with caption '/addsolexafilter keyword [text]'")
             logger.warning("Insufficient arguments in media caption")
             return
-
         keyword = args[1].lower()
-        response_text = args[2] if len(args) > 2 else ""
+        # Extract text after command and keyword
+        raw_text = args[2] if len(args) > 2 else ""
+        # Apply entities to reconstruct MarkdownV2
+        entities = update.message.caption_entities or []
+        # Remove the command portion from entities' offsets
+        command_length = len(f"/addsolexafilter {keyword} ")
+        filtered_entities = [e for e in entities if e.offset >= command_length]
+        for e in filtered_entities:
+            e.offset -= command_length  # Adjust offsets
+        response_text = apply_entities_to_caption(raw_text, filtered_entities)
         response_text = escape_markdown_v2(response_text)
-
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
-
         if update.message.photo:
             file_id = update.message.photo[-1].file_id
             filters_dict[chat_id][keyword] = {'type': 'photo', 'file_id': file_id, 'text': response_text}
@@ -493,7 +476,6 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("No supported media type detected")
             logger.warning("No supported media type in message")
             return
-
         save_filters()
     else:
         await update.message.reply_text("Group-only command ❌")
@@ -527,7 +509,6 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 keyword = context.args[0].lower()
                 chat_id = update.message.chat_id
-
                 if chat_id in filters_dict and keyword in filters_dict[chat_id]:
                     del filters_dict[chat_id][keyword]
                     save_filters()
@@ -541,7 +522,6 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Group-only command ❌")
 
-# HANDLERS
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("ban", ban_user))
 application.add_handler(CommandHandler("kick", kick_user))
@@ -557,7 +537,6 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
-# FASTAPI WEBHOOK
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     data = await request.json()
