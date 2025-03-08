@@ -147,18 +147,22 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
             username = target_user[1:].lower()
             logger.info(f"Resolving username: @{username} in chat {chat_id}")
             try:
-                async for member in context.bot.get_chat_members(chat_id):
-                    member_username = member.user.username
-                    if member_username and member_username.lower() == username:
-                        logger.info(f"Found user @{username} with ID {member.user.id}")
-                        return member.user.id
-                logger.warning(f"User @{username} not found in member list")
+                # Use get_chat_member to find the user by username
+                member = await context.bot.get_chat_member(chat_id, username=username)
+                user_id = member.user.id
+                logger.info(f"Found user @{username} with ID {user_id}")
+                return user_id
+            except BadRequest as e:
+                if "user not found" in str(e).lower():
+                    logger.warning(f"User @{username} not found in chat {chat_id}")
+                else:
+                    logger.error(f"Error resolving user @{username}: {e}")
                 return None
             except Forbidden:
-                logger.error("Bot lacks permission to view member list")
+                logger.error(f"Bot lacks permission to get chat member in chat {chat_id}")
                 return None
             except Exception as e:
-                logger.error(f"Error searching members: {e}")
+                logger.error(f"Unexpected error resolving user @{username}: {e}")
                 return None
         else:
             user_id = int(target_user)
@@ -323,7 +327,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
         "- Supports *bold*, _italics_, [hyperlinks](https://example.com), and links (use single * and _ for filters)\n"
         "- Filters trigger only on standalone keywords (e.g., 'x' or '/x')\n"
-        "- Reply to messages to target users\n"
+        "- Reply to messages to target users or use /command @username\n"
         "- Contact admin for help"
     )
     await update.message.reply_text(help_text, parse_mode='MarkdownV2')
@@ -369,7 +373,7 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 await context.bot.ban_chat_member(update.message.chat_id, user_id)
                 await context.bot.unban_chat_member(update.message.chat_id, user_id, only_if_banned=True)
-                await update.message.reply_text("User kicked ✅")
+                await update.message.reply_text(f"User {target_user} kicked ✅")
             except IndexError:
                 await update.message.reply_text("Usage: /kick @username or reply to a user")
         else:
@@ -395,7 +399,7 @@ async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration
                 permissions = ChatPermissions(can_send_messages=False)
                 until = update.message.date + duration
                 await context.bot.restrict_chat_member(update.message.chat_id, user_id, permissions, until_date=until)
-                await update.message.reply_text(f"Muted for {int(duration.total_seconds()/60)} minutes ✅")
+                await update.message.reply_text(f"User {target_user} muted for {int(duration.total_seconds()/60)} minutes ✅")
             except IndexError:
                 await update.message.reply_text(f"Usage: /mute10 @username or reply to a user")
         else:
@@ -411,6 +415,30 @@ async def mute30(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def mute1hr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await mute_user(update, context, timedelta(hours=1))
+
+async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type != "private":
+        if update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+            try:
+                target_user = context.args[0] if context.args else None
+                if not target_user:
+                    user_id = await get_user_id_from_reply(update)
+                    if not user_id:
+                        await update.message.reply_text("Error: Specify a username or reply to a message")
+                        return
+                else:
+                    user_id = await resolve_user(update.message.chat_id, target_user, context)
+                if not user_id:
+                    await update.message.reply_text(f"Error: User {target_user} not found")
+                    return
+                await context.bot.unban_chat_member(update.message.chat_id, user_id)
+                await update.message.reply_text(f"User {target_user} unbanned ✅")
+            except IndexError:
+                await update.message.reply_text("Usage: /unban @username or reply to a user")
+        else:
+            await update.message.reply_text("No permission ❌")
+    else:
+        await update.message.reply_text("Group-only command ❌")
 
 async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
@@ -565,6 +593,7 @@ application.add_handler(CommandHandler("kick", kick_user))
 application.add_handler(CommandHandler("mute10", mute10))
 application.add_handler(CommandHandler("mute30", mute30))
 application.add_handler(CommandHandler("mute1hr", mute1hr))
+application.add_handler(CommandHandler("unban", unban_user))  # Added unban command
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION, add_media_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
