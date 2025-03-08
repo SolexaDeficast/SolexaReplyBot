@@ -72,9 +72,9 @@ def save_filters():
         logger.error(f"Error saving filters: {e}")
 
 def escape_markdown_v2(text):
-    """Escape all reserved MarkdownV2 characters, reprocessing the full text."""
+    """Escape all reserved MarkdownV2 characters, ensuring ! is always escaped."""
     reserved_chars = r"[-()~`>#+|=|{}.!]"
-    # First, preserve existing Markdown patterns
+    # Preserve existing Markdown patterns
     patterns = [
         r'(\[.*?\]\(.*?\))',    # Hyperlinks: [text](url)
         r'(\*\*[^\*]*\*\*)',    # Bold: **text**
@@ -86,41 +86,73 @@ def escape_markdown_v2(text):
         for i in range(1, 4):
             if match.group(i):
                 return match.group(i)
-        return '\\' + match.group(4)
+        char = match.group(4)
+        return '\\' + char  # Force escape of !
     
-    # Re-escape the entire text to catch any unescaped chars
     escaped_text = re.sub(combined_pattern, replace_func, text)
     logger.info(f"Escaped text: {repr(escaped_text)}")
     return escaped_text
 
 def apply_entities_to_caption(caption, entities):
-    """Reconstruct MarkdownV2 text from caption and entities with correct marker placement."""
+    """Reconstruct MarkdownV2 text, wrapping entities without breaking on newlines."""
     if not entities:
         return caption
     
-    result = list(caption)
-    offset_shift = 0
+    # Split into lines to preserve structure
+    lines = caption.split('\n')
+    result = []
+    current_line = 0
+    char_pos = 0
+    entity_index = 0
     
-    for entity in sorted(entities, key=lambda e: e.offset):
-        start = entity.offset + offset_shift
-        end = start + entity.length
+    for line in lines:
+        if not line.strip() and entity_index >= len(entities):
+            result.append(line)
+            continue
         
-        if entity.type == "bold":
-            result.insert(start, "**")
-            result.insert(end + offset_shift, "**")  # Corrected to use current offset_shift
-            offset_shift += 4
-        elif entity.type == "italic":
-            result.insert(start, "__")
-            result.insert(end + offset_shift, "__")  # Corrected to use current offset_shift
-            offset_shift += 4
-        elif entity.type == "url" and entity.url:
-            text = caption[entity.offset:entity.offset + entity.length]
-            link = f"[{text}]({entity.url})"
-            del result[start:end]
-            result[start:start] = list(link)
-            offset_shift += len(link) - entity.length
+        line_length = len(line)
+        line_start = char_pos
+        line_end = char_pos + line_length
+        
+        while entity_index < len(entities):
+            entity = entities[entity_index]
+            entity_start = entity.offset
+            entity_end = entity_start + entity.length
+            
+            if entity_end <= line_start:
+                entity_index += 1
+                continue
+            if entity_start >= line_end:
+                break
+                
+            # Adjust entity offsets to current line
+            adj_start = max(0, entity_start - line_start)
+            adj_end = min(line_length, entity_end - line_start)
+            adj_length = adj_end - adj_start
+            
+            if adj_length > 0:
+                entity_text = line[adj_start:adj_end]
+                if entity.type == "bold":
+                    formatted = f"**{entity_text}**"
+                elif entity.type == "italic":
+                    formatted = f"__{entity_text}__"
+                elif entity.type == "url" and entity.url:
+                    formatted = f"[{entity_text}]({entity.url})"
+                else:
+                    formatted = entity_text
+                
+                # Replace the entity portion
+                new_line = line[:adj_start] + formatted + line[adj_end:]
+                line = new_line
+                line_length = len(line)
+                line_end = line_start + line_length
+            
+            entity_index += 1
+        
+        result.append(line)
+        char_pos += line_length + 1  # +1 for newline
     
-    final_text = ''.join(result)
+    final_text = '\n'.join(result)
     logger.info(f"Text after applying entities: {repr(final_text)}")
     return final_text
 
