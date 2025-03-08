@@ -57,7 +57,7 @@ def load_filters():
                             logger.warning(f"Invalid filter format for {k} in chat {chat_id}, skipping")
         else:
             filters_dict = {}
-        logger.info("Filters loaded successfully")
+        logger.info(f"Filters loaded: {repr(filters_dict)}")
     except Exception as e:
         logger.error(f"Error loading filters: {e}")
         filters_dict = {}
@@ -68,7 +68,7 @@ def save_filters():
             serializable = {str(chat_id): filters 
                            for chat_id, filters in filters_dict.items()}
             json.dump(serializable, f)
-        logger.info("Filters saved successfully")
+        logger.info(f"Filters saved: {repr(filters_dict)}")
     except Exception as e:
         logger.error(f"Error saving filters: {e}")
 
@@ -93,7 +93,9 @@ def escape_markdown_v2(text):
         # Otherwise, escape the reserved character (group 4)
         return '\\' + match.group(4)
     
-    return re.sub(combined_pattern, replace_func, text)
+    escaped_text = re.sub(combined_pattern, replace_func, text)
+    logger.info(f"Escaped text: {repr(escaped_text)}")
+    return escaped_text
 
 def generate_captcha():
     num1 = random.randint(1, 10)
@@ -241,7 +243,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         media_type = response['type']
                         file_id = response['file_id']
                         text = response.get('text', '')
-                        logger.info(f"Triggering media filter: {keyword} with {media_type}")
+                        logger.info(f"Triggering media filter: {keyword} with {media_type}, raw caption: {repr(text)}")
                         if media_type == 'photo':
                             await update.message.reply_photo(photo=file_id, caption=text, parse_mode='MarkdownV2')
                         elif media_type == 'video':
@@ -251,7 +253,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         elif media_type == 'animation':
                             await update.message.reply_animation(animation=file_id, caption=text, parse_mode='MarkdownV2')
                     elif isinstance(response, str):
-                        logger.info(f"Triggering text filter: {keyword}")
+                        logger.info(f"Triggering text filter: {keyword}, raw text: {repr(response)}")
                         await update.message.reply_text(response, parse_mode='MarkdownV2')
                     else:
                         logger.warning(f"Invalid response format for {keyword}")
@@ -291,7 +293,7 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
                         media_type = response['type']
                         file_id = response['file_id']
                         text = response.get('text', '')
-                        logger.info(f"Command filter: {keyword} with {media_type}")
+                        logger.info(f"Command filter: {keyword} with {media_type}, raw caption: {repr(text)}")
                         if media_type == 'photo':
                             await update.message.reply_photo(photo=file_id, caption=text, parse_mode='MarkdownV2')
                         elif media_type == 'video':
@@ -301,7 +303,7 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
                         elif media_type == 'animation':
                             await update.message.reply_animation(animation=file_id, caption=text, parse_mode='MarkdownV2')
                     elif isinstance(response, str):
-                        logger.info(f"Command text filter: {keyword}")
+                        logger.info(f"Command text filter: {keyword}, raw text: {repr(response)}")
                         await update.message.reply_text(response, parse_mode='MarkdownV2')
                     else:
                         logger.warning(f"Invalid command response format for {keyword}")
@@ -437,7 +439,7 @@ async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filters_dict[chat_id][keyword] = response_text
         save_filters()
         await update.message.reply_text(f"Text filter '{keyword}' added ✅")
-        logger.info(f"Added text filter '{keyword}'")
+        logger.info(f"Added text filter '{keyword}' with text: {repr(response_text)}")
     else:
         await update.message.reply_text("Group-only command ❌")
 
@@ -471,22 +473,22 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file_id = update.message.photo[-1].file_id
             filters_dict[chat_id][keyword] = {'type': 'photo', 'file_id': file_id, 'text': response_text}
             await update.message.reply_text(f"Photo filter '{keyword}' added ✅")
-            logger.info(f"Added photo filter '{keyword}' with file_id {file_id} and text '{response_text}'")
+            logger.info(f"Added photo filter '{keyword}' with file_id {file_id} and text: {repr(response_text)}")
         elif update.message.video:
             file_id = update.message.video.file_id
             filters_dict[chat_id][keyword] = {'type': 'video', 'file_id': file_id, 'text': response_text}
             await update.message.reply_text(f"Video filter '{keyword}' added ✅")
-            logger.info(f"Added video filter '{keyword}' with file_id {file_id} and text '{response_text}'")
+            logger.info(f"Added video filter '{keyword}' with file_id {file_id} and text: {repr(response_text)}")
         elif update.message.audio:
             file_id = update.message.audio.file_id
             filters_dict[chat_id][keyword] = {'type': 'audio', 'file_id': file_id, 'text': response_text}
             await update.message.reply_text(f"Audio filter '{keyword}' added ✅")
-            logger.info(f"Added audio filter '{keyword}' with file_id {file_id} and text '{response_text}'")
+            logger.info(f"Added audio filter '{keyword}' with file_id {file_id} and text: {repr(response_text)}")
         elif update.message.animation:
             file_id = update.message.animation.file_id
             filters_dict[chat_id][keyword] = {'type': 'animation', 'file_id': file_id, 'text': response_text}
             await update.message.reply_text(f"GIF filter '{keyword}' added ✅")
-            logger.info(f"Added GIF filter '{keyword}' with file_id {file_id} and text '{response_text}'")
+            logger.info(f"Added GIF filter '{keyword}' with file_id {file_id} and text: {repr(response_text)}")
         else:
             await update.message.reply_text("No supported media type detected")
             logger.warning("No supported media type in message")
