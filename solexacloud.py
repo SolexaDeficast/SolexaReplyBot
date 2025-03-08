@@ -98,18 +98,17 @@ def apply_entities_to_caption(caption, entities):
     if not entities:
         return caption
     
-    result = list(caption)
-    offset_shift = 0
-    
-    for entity in sorted(entities, key=lambda e: e.offset):
-        start = entity.offset + offset_shift
+    # Process entities in reverse order to avoid offset issues
+    result = caption
+    for entity in sorted(entities, key=lambda e: e.offset, reverse=True):
+        start = entity.offset
         end = start + entity.length
         
-        if start >= len(result) or end > len(result):
-            logger.warning(f"Entity out of bounds: {entity}")
+        if start < 0 or end > len(result):
+            logger.warning(f"Entity out of bounds: {entity}, caption length: {len(result)}")
             continue
             
-        entity_text = ''.join(result[start:end])
+        entity_text = result[start:end]
         if entity.type == "bold":
             new_text = f"**{entity_text}**"
         elif entity.type == "italic":
@@ -119,14 +118,10 @@ def apply_entities_to_caption(caption, entities):
         else:
             new_text = entity_text
             
-        # Replace the entity text with formatted version
-        del result[start:end]
-        result[start:start] = list(new_text)
-        offset_shift += len(new_text) - entity.length
-        
-    final_text = ''.join(result)
-    logger.info(f"Text after applying entities: {repr(final_text)}")
-    return final_text
+        result = result[:start] + new_text + result[end:]
+    
+    logger.info(f"Text after applying entities: {repr(result)}")
+    return result
 
 def generate_captcha():
     num1 = random.randint(1, 10)
@@ -453,17 +448,25 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyword = args[1].lower()
         raw_text = args[2] if len(args) > 2 else ""
         entities = update.message.caption_entities or []
-        command_length = len(f"/addsolexafilter {keyword} ")
-        adjusted_entities = [
-            MessageEntity(
+        # Adjust entity offsets correctly
+        command_prefix = f"/addsolexafilter {keyword}"
+        command_length = len(command_prefix) + 1  # +1 for the space after keyword
+        adjusted_entities = []
+        for e in entities:
+            if e.offset < command_length:
+                continue
+            new_offset = e.offset - command_length
+            if new_offset < 0 or new_offset >= len(raw_text):
+                logger.warning(f"Skipping entity due to invalid offset after adjustment: {e}")
+                continue
+            adjusted_entity = MessageEntity(
                 type=e.type,
-                offset=e.offset - command_length,
+                offset=new_offset,
                 length=e.length,
                 url=e.url
             )
-            for e in entities
-            if e.offset >= command_length
-        ]
+            adjusted_entities.append(adjusted_entity)
+        logger.info(f"Adjusted entities: {adjusted_entities}")
         response_text = apply_entities_to_caption(raw_text, adjusted_entities)
         response_text = escape_markdown_v2(response_text)  # Re-escape after applying entities
         if chat_id not in filters_dict:
