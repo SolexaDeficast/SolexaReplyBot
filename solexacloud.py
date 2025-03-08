@@ -96,22 +96,31 @@ def apply_entities_to_caption(caption, entities):
     if not entities:
         return caption
     
-    result = caption
-    # Process entities from end to start to avoid offset issues
-    for entity in sorted(entities, key=lambda e: e.offset, reverse=True):
-        start = entity.offset
-        end = entity.offset + entity.length
+    # Work on a list of characters for precise insertion
+    result = list(caption)
+    offset_shift = 0
+    
+    # Process entities in order (start to end) to track shifts correctly
+    for entity in sorted(entities, key=lambda e: e.offset):
+        start = entity.offset + offset_shift
+        end = start + entity.length
         
         if entity.type == "bold":
-            result = result[:start] + "**" + result[start:end] + "**" + result[end:]
+            result.insert(start, "**")
+            result.insert(end + 2, "**")
+            offset_shift += 4
         elif entity.type == "italic":
-            result = result[:start] + "__" + result[start:end] + "__" + result[end:]
+            result.insert(start, "__")
+            result.insert(end + 2, "__")
+            offset_shift += 4
         elif entity.type == "url" and entity.url:
             text = caption[entity.offset:entity.offset + entity.length]
             link = f"[{text}]({entity.url})"
-            result = result[:start] + link + result[end:]
+            del result[start:end]
+            result[start:start] = list(link)
+            offset_shift += len(link) - entity.length
     
-    return result
+    return ''.join(result)
 
 def generate_captcha():
     num1 = random.randint(1, 10)
