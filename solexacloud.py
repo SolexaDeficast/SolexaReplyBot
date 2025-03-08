@@ -94,65 +94,37 @@ def escape_markdown_v2(text):
     return escaped_text
 
 def apply_entities_to_caption(caption, entities):
-    """Reconstruct MarkdownV2 text, wrapping entities without breaking on newlines."""
+    """Reconstruct MarkdownV2 text with precise entity wrapping."""
     if not entities:
         return caption
     
-    # Split into lines to preserve structure
-    lines = caption.split('\n')
-    result = []
-    current_line = 0
-    char_pos = 0
-    entity_index = 0
+    result = list(caption)
+    offset_shift = 0
     
-    for line in lines:
-        if not line.strip() and entity_index >= len(entities):
-            result.append(line)
+    for entity in sorted(entities, key=lambda e: e.offset):
+        start = entity.offset + offset_shift
+        end = start + entity.length
+        
+        if start >= len(result) or end > len(result):
+            logger.warning(f"Entity out of bounds: {entity}")
             continue
-        
-        line_length = len(line)
-        line_start = char_pos
-        line_end = char_pos + line_length
-        
-        while entity_index < len(entities):
-            entity = entities[entity_index]
-            entity_start = entity.offset
-            entity_end = entity_start + entity.length
             
-            if entity_end <= line_start:
-                entity_index += 1
-                continue
-            if entity_start >= line_end:
-                break
-                
-            # Adjust entity offsets to current line
-            adj_start = max(0, entity_start - line_start)
-            adj_end = min(line_length, entity_end - line_start)
-            adj_length = adj_end - adj_start
+        entity_text = ''.join(result[start:end])
+        if entity.type == "bold":
+            new_text = f"**{entity_text}**"
+        elif entity.type == "italic":
+            new_text = f"__{entity_text}__"
+        elif entity.type == "url" and entity.url:
+            new_text = f"[{entity_text}]({entity.url})"
+        else:
+            new_text = entity_text
             
-            if adj_length > 0:
-                entity_text = line[adj_start:adj_end]
-                if entity.type == "bold":
-                    formatted = f"**{entity_text}**"
-                elif entity.type == "italic":
-                    formatted = f"__{entity_text}__"
-                elif entity.type == "url" and entity.url:
-                    formatted = f"[{entity_text}]({entity.url})"
-                else:
-                    formatted = entity_text
-                
-                # Replace the entity portion
-                new_line = line[:adj_start] + formatted + line[adj_end:]
-                line = new_line
-                line_length = len(line)
-                line_end = line_start + line_length
-            
-            entity_index += 1
+        # Replace the entity text with formatted version
+        del result[start:end]
+        result[start:start] = list(new_text)
+        offset_shift += len(new_text) - entity.length
         
-        result.append(line)
-        char_pos += line_length + 1  # +1 for newline
-    
-    final_text = '\n'.join(result)
+    final_text = ''.join(result)
     logger.info(f"Text after applying entities: {repr(final_text)}")
     return final_text
 
