@@ -96,6 +96,12 @@ def escape_markdown_v2(text):
     logger.info(f"Escaped text: {repr(escaped_text)}")
     return escaped_text
 
+def escape_pipe(text):
+    """Specifically escape the | character for MarkdownV2."""
+    escaped_text = text.replace('|', r'\|')
+    logger.info(f"Escaped pipe in text: {repr(escaped_text)}")
+    return escaped_text
+
 def apply_entities_to_caption(caption, entities):
     """Reconstruct MarkdownV2 text with precise entity wrapping using single markers."""
     if not entities or not caption:
@@ -258,19 +264,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         media_type = response['type']
                         file_id = response['file_id']
                         text = response.get('text', '')
-                        logger.info(f"Triggering media filter: {keyword} with {media_type}, raw caption: {repr(text)}")
+                        # Escape the | character in the caption before sending
+                        escaped_text = escape_pipe(text)
+                        logger.info(f"Triggering media filter: {keyword} with {media_type}, escaped caption: {repr(escaped_text)}")
                         if media_type == 'photo':
                             try:
-                                await update.message.reply_photo(photo=file_id, caption=text, parse_mode='MarkdownV2')
+                                await update.message.reply_photo(photo=file_id, caption=escaped_text, parse_mode='MarkdownV2')
                             except BadRequest as e:
                                 logger.error(f"Failed to send photo with caption: {e}")
                                 await update.message.reply_text(f"Error: {str(e)}")
                         elif media_type == 'video':
-                            await update.message.reply_video(video=file_id, caption=text, parse_mode='MarkdownV2', supports_streaming=True)
+                            await update.message.reply_video(video=file_id, caption=escaped_text, parse_mode='MarkdownV2', supports_streaming=True)
                         elif media_type == 'audio':
-                            await update.message.reply_audio(audio=file_id, caption=text, parse_mode='MarkdownV2')
+                            await update.message.reply_audio(audio=file_id, caption=escaped_text, parse_mode='MarkdownV2')
                         elif media_type == 'animation':
-                            await update.message.reply_animation(animation=file_id, caption=text, parse_mode='MarkdownV2')
+                            await update.message.reply_animation(animation=file_id, caption=escaped_text, parse_mode='MarkdownV2')
                     elif isinstance(response, str):
                         logger.info(f"Triggering text filter: {keyword}, raw text: {repr(response)}")
                         await update.message.reply_text(response, parse_mode='MarkdownV2')
@@ -308,15 +316,17 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
                         media_type = response['type']
                         file_id = response['file_id']
                         text = response.get('text', '')
-                        logger.info(f"Command filter: {keyword} with {media_type}, raw caption: {repr(text)}")
+                        # Escape the | character in the caption before sending
+                        escaped_text = escape_pipe(text)
+                        logger.info(f"Command filter: {keyword} with {media_type}, escaped caption: {repr(escaped_text)}")
                         if media_type == 'photo':
-                            await update.message.reply_photo(photo=file_id, caption=text, parse_mode='MarkdownV2')
+                            await update.message.reply_photo(photo=file_id, caption=escaped_text, parse_mode='MarkdownV2')
                         elif media_type == 'video':
-                            await update.message.reply_video(video=file_id, caption=text, parse_mode='MarkdownV2', supports_streaming=True)
+                            await update.message.reply_video(video=file_id, caption=escaped_text, parse_mode='MarkdownV2', supports_streaming=True)
                         elif media_type == 'audio':
-                            await update.message.reply_audio(audio=file_id, caption=text, parse_mode='MarkdownV2')
+                            await update.message.reply_audio(audio=file_id, caption=escaped_text, parse_mode='MarkdownV2')
                         elif media_type == 'animation':
-                            await update.message.reply_animation(animation=file_id, caption=text, parse_mode='MarkdownV2')
+                            await update.message.reply_animation(animation=file_id, caption=escaped_text, parse_mode='MarkdownV2')
                     elif isinstance(response, str):
                         logger.info(f"Command text filter: {keyword}, raw text: {repr(response)}")
                         await update.message.reply_text(response, parse_mode='MarkdownV2')
