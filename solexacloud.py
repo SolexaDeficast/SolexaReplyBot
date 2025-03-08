@@ -73,19 +73,27 @@ def save_filters():
         logger.error(f"Error saving filters: {e}")
 
 def escape_markdown_v2(text):
-    """Escape reserved MarkdownV2 characters in plain text, preserving valid syntax."""
-    # List of reserved characters in MarkdownV2
-    reserved_chars = r"[_*[]()~`>#+-=|{}.!]"
-    # Pattern to avoid escaping within valid MarkdownV2 hyperlink syntax: [text](url)
-    pattern = r'(\[.*?\]\(.*?\))|(' + reserved_chars + ')'
+    """Escape reserved MarkdownV2 characters in plain text, preserving valid formatting."""
+    # Reserved characters that need escaping in plain text
+    reserved_chars = r"[-()~`>#+|=|{}.!]"
+    # Patterns for valid MarkdownV2 syntax to preserve
+    patterns = [
+        r'(\[.*?\]\(.*?\))',    # Hyperlinks: [text](url)
+        r'(\*\*[^\*]*\*\*)',    # Bold: **text** (non-greedy match)
+        r'(__[^_]*__)',         # Italics: __text__ (non-greedy match)
+    ]
+    # Combine patterns with reserved chars
+    combined_pattern = '|'.join(patterns) + f'|({reserved_chars})'
     
     def replace_func(match):
-        if match.group(1):  # If it's a hyperlink, return it unchanged
-            return match.group(1)
-        else:  # Escape the reserved character
-            return '\\' + match.group(2)
+        # If it matches any valid syntax (groups 1-3), return unchanged
+        for i in range(1, 4):
+            if match.group(i):
+                return match.group(i)
+        # Otherwise, escape the reserved character (group 4)
+        return '\\' + match.group(4)
     
-    return re.sub(pattern, replace_func, text)
+    return re.sub(combined_pattern, replace_func, text)
 
 def generate_captcha():
     num1 = random.randint(1, 10)
@@ -308,7 +316,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- New members must solve captcha\n"
         "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, etc\n"
         "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
-        "- Supports *bold*, _italics_, [hyperlinks](https://example.com), and links\n"
+        "- Supports **bold**, __italics__, [hyperlinks](https://example.com), and links\n"
         "- Filters trigger only on standalone keywords (e.g., 'x' or '/x')\n"
         "- Reply to messages to target users\n"
         "- Contact admin for help"
@@ -421,7 +429,7 @@ async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyword = context.args[0].lower()
         response_text = " ".join(context.args[1:])
-        response_text = escape_markdown_v2(response_text)  # Escape for text filters too
+        response_text = escape_markdown_v2(response_text)
 
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
@@ -454,7 +462,7 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyword = args[1].lower()
         response_text = args[2] if len(args) > 2 else ""
-        response_text = escape_markdown_v2(response_text)  # Escape reserved characters
+        response_text = escape_markdown_v2(response_text)
 
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
