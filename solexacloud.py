@@ -47,17 +47,23 @@ captcha_state = {}  # {chat_id: True/False}
 BLACKLIST_FILE = "/data/blacklist.json"
 blacklist_dict = {}  # {chat_id: {'terms': set(), 'users': {user_id: offense_count}}}
 
+def ensure_file_exists(file_path, default_content):
+    if not os.path.exists(file_path):
+        with open(file_path, 'w') as f:
+            json.dump(default_content, f)
+        logger.info(f"Created default file: {file_path}")
+
 def load_state(file_path, state_dict, default_factory=lambda: {}):
+    ensure_file_exists(file_path, {})
     try:
-        if os.path.exists(file_path):
-            with open(file_path, 'r') as f:
-                data = json.load(f)
-                for chat_id, value in data.items():
-                    chat_id = int(chat_id)
-                    if file_path == BLACKLIST_FILE:
-                        value['terms'] = set(value['terms'])
-                        value['users'] = {int(k): v for k, v in value['users'].items()}
-                    state_dict[chat_id] = value
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+            for chat_id, value in data.items():
+                chat_id = int(chat_id)
+                if file_path == BLACKLIST_FILE:
+                    value['terms'] = set(value['terms'])
+                    value['users'] = {int(k): v for k, v in value['users'].items()}
+                state_dict[chat_id] = value
         logger.info(f"Loaded {file_path}: {repr(state_dict)}")
     except Exception as e:
         logger.error(f"Error loading {file_path}: {e}")
@@ -78,13 +84,13 @@ def save_state(file_path, state_dict):
 
 def load_filters(): load_state(FILTERS_FILE, filters_dict)
 def save_filters(): save_state(FILTERS_FILE, filters_dict)
-def load_cleanservice(): load_state(CLEANSERVICE_FILE, cleanservice_state)
+def load_cleanservice(): load_state(CLEANSERVICE_FILE, cleanservice_state, lambda: {chat_id: {'enabled': False, 'delay': 15} for chat_id in filters_dict})
 def save_cleanservice(): save_state(CLEANSERVICE_FILE, cleanservice_state)
-def load_welcome(): load_state(WELCOME_FILE, welcome_dict)
+def load_welcome(): load_state(WELCOME_FILE, welcome_dict, lambda: {chat_id: {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''} for chat_id in filters_dict})
 def save_welcome(): save_state(WELCOME_FILE, welcome_dict)
 def load_captcha(): load_state(CAPTCHA_FILE, captcha_state, lambda: {chat_id: True for chat_id in filters_dict})
 def save_captcha(): save_state(CAPTCHA_FILE, captcha_state)
-def load_blacklist(): load_state(BLACKLIST_FILE, blacklist_dict)
+def load_blacklist(): load_state(BLACKLIST_FILE, blacklist_dict, lambda: {chat_id: {'terms': set(), 'users': {}} for chat_id in filters_dict})
 def save_blacklist(): save_state(BLACKLIST_FILE, blacklist_dict)
 
 def escape_markdown_v2(text):
@@ -139,24 +145,27 @@ def generate_captcha():
     return f"What is {num1} + {num2}?", options, correct_answer
 
 async def is_admin(user_id, chat_id, context):
-    return user_id in [admin.user.id for admin in await context.bot.get_chat_administrators(chat_id)]
+    try:
+        admins = [admin.user.id for admin in await context.bot.get_chat_administrators(chat_id)]
+        is_admin = user_id in admins
+        logger.info(f"Admin check for {user_id} in {chat_id}: {is_admin}")
+        return is_admin
+    except Exception as e:
+        logger.error(f"Failed to check admin status for {user_id} in {chat_id}: {e}")
+        return False
 
 async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEFAULT_TYPE) -> int or None:
     try:
         if target_user.startswith("@"):
             username = target_user[1:].lower()
-            logger.info(f"Resolving username: @{username} in chat {chat_id}")
+            logger.info(f"Resolving @{username} in {chat_id}")
             if chat_id in user_id_cache and username in user_id_cache[chat_id]:
-                user_id = user_id_cache[chat_id][username]
-                logger.info(f"Found @{username} with ID {user_id} in cache")
-                return user_id
-            else:
-                logger.warning(f"@{username} not in cache for chat {chat_id}")
-                return None
-        else:
-            user_id = int(target_user)
-            logger.info(f"Using user ID: {user_id}")
-            return user_id
+                return user_id_cache[chat_id][username]
+            logger.warning(f"@{username} not in cache for {chat_id}")
+            return None
+        user_id = int(target_user)
+        logger.info(f"Using user ID: {user_id}")
+        return user_id
     except Exception as e:
         logger.error(f"Error resolving user: {e}")
         return None
@@ -169,9 +178,9 @@ async def get_user_id_from_reply(update: Update) -> int or None:
 async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
     try:
         await context.bot.delete_message(chat_id, message_id)
-        logger.info(f"Deleted message {message_id} in chat {chat_id}")
+        logger.info(f"Deleted message {message_id} in {chat_id}")
     except Exception as e:
-        logger.error(f"Error deleting message {message_id} in chat {chat_id}: {e}")
+        logger.error(f"Error deleting {message_id} in {chat_id}: {e}")
 
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -179,7 +188,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for member in update.message.new_chat_members:
             user_id = member.id
             username = member.username or member.first_name
-            logger.info(f"New member: {username} (ID: {user_id}) in {update.message.chat.title}")
+            logger.info(f"New member: {username} (ID: {user_id}) in {chat_id}")
             if chat_id not in user_id_cache: user_id_cache[chat_id] = {}
             if member.username: user_id_cache[chat_id][member.username.lower()] = user_id
             permissions = ChatPermissions(can_send_messages=False)
@@ -370,6 +379,7 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
 
 async def solexacleanservice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
+    logger.info(f"Processing /solexacleanservice in {chat_id}")
     if not await is_admin(update.message.from_user.id, chat_id, context):
         await update.message.reply_text("No permission ❌")
         return
@@ -398,6 +408,7 @@ async def solexacleanservice(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def setsolexawelcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
+    logger.info(f"Processing /setsolexawelcome in {chat_id}")
     if not await is_admin(update.message.from_user.id, chat_id, context):
         await update.message.reply_text("No permission ❌")
         return
@@ -449,6 +460,7 @@ async def setsolexawelcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def showsolexawelcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     user_id = update.message.from_user.id
+    logger.info(f"Processing /showsolexawelcome in {chat_id}")
     if not await is_admin(user_id, chat_id, context):
         await update.message.reply_text("No permission ❌")
         return
@@ -470,6 +482,7 @@ async def showsolexawelcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def setcaptcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
+    logger.info(f"Processing /setcaptcha in {chat_id}")
     if not await is_admin(update.message.from_user.id, chat_id, context):
         await update.message.reply_text("No permission ❌")
         return
@@ -492,6 +505,7 @@ async def setcaptcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def testfilter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     user_id = update.message.from_user.id
+    logger.info(f"Processing /testfilter in {chat_id}")
     if not await is_admin(user_id, chat_id, context):
         await update.message.reply_text("No permission ❌")
         return
@@ -524,6 +538,7 @@ async def testfilter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def addsolexablacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
+    logger.info(f"Processing /addsolexablacklist in {chat_id}")
     if not await is_admin(update.message.from_user.id, chat_id, context):
         await update.message.reply_text("No permission ❌")
         return
@@ -538,6 +553,7 @@ async def addsolexablacklist(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def removesolexablacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
+    logger.info(f"Processing /removesolexablacklist in {chat_id}")
     if not await is_admin(update.message.from_user.id, chat_id, context):
         await update.message.reply_text("No permission ❌")
         return
@@ -554,6 +570,7 @@ async def removesolexablacklist(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def viewsolexablacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
+    logger.info(f"Processing /viewsolexablacklist in {chat_id}")
     if not await is_admin(update.message.from_user.id, chat_id, context):
         await update.message.reply_text("No permission ❌")
         return
@@ -565,6 +582,7 @@ async def viewsolexablacklist(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def solexaunmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
+    logger.info(f"Processing /solexaunmute in {chat_id}")
     if not await is_admin(update.message.from_user.id, chat_id, context):
         await update.message.reply_text("No permission ❌")
         return
@@ -588,6 +606,7 @@ async def solexaunmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def adminhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
+    logger.info(f"Processing /adminhelp in {chat_id}")
     if not await is_admin(update.message.from_user.id, chat_id, context):
         await update.message.reply_text("No permission ❌")
         return
@@ -602,6 +621,7 @@ async def adminhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def adminhelp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat_id
+    logger.info(f"Processing adminhelp callback in {chat_id}")
     if not await is_admin(query.from_user.id, chat_id, context):
         await query.answer("No permission ❌", show_alert=True)
         return
@@ -655,6 +675,7 @@ async def adminhelp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def adminhelp_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat_id
+    logger.info(f"Processing adminhelp back in {chat_id}")
     if not await is_admin(query.from_user.id, chat_id, context):
         await query.answer("No permission ❌", show_alert=True)
         return
@@ -881,14 +902,21 @@ async def telegram_webhook(request: Request):
 
 @app.on_event("startup")
 async def startup():
+    ensure_file_exists(FILTERS_FILE, {})
+    ensure_file_exists(CLEANSERVICE_FILE, {})
+    ensure_file_exists(WELCOME_FILE, {})
+    ensure_file_exists(CAPTCHA_FILE, {})
+    ensure_file_exists(BLACKLIST_FILE, {})
     load_filters()
     load_cleanservice()
     load_welcome()
     load_captcha()
     load_blacklist()
+    logger.info(f"Starting application with webhook: {WEBHOOK_URL}")
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
+    logger.info("Webhook set successfully")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=10000)
