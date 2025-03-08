@@ -96,27 +96,22 @@ def apply_entities_to_caption(caption, entities):
     if not entities:
         return caption
     
-    result = list(caption)
-    offset_shift = 0
-    
-    for entity in sorted(entities, key=lambda e: e.offset):
-        start = entity.offset + offset_shift
-        end = start + entity.length
+    result = caption
+    # Process entities from end to start to avoid offset issues
+    for entity in sorted(entities, key=lambda e: e.offset, reverse=True):
+        start = entity.offset
+        end = entity.offset + entity.length
         
         if entity.type == "bold":
-            result.insert(start, "**")
-            result.insert(end + 2, "**")
-            offset_shift += 4
+            result = result[:start] + "**" + result[start:end] + "**" + result[end:]
         elif entity.type == "italic":
-            result.insert(start, "__")
-            result.insert(end + 2, "__")
-            offset_shift += 4
+            result = result[:start] + "__" + result[start:end] + "__" + result[end:]
         elif entity.type == "url" and entity.url:
             text = caption[entity.offset:entity.offset + entity.length]
-            result[start:end] = [f"[{text}]({entity.url})"]
-            offset_shift += len(f"[{text}]({entity.url})") - entity.length
+            link = f"[{text}]({entity.url})"
+            result = result[:start] + link + result[end:]
     
-    return ''.join(result)
+    return result
 
 def generate_captcha():
     num1 = random.randint(1, 10)
@@ -440,7 +435,6 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw_text = args[2] if len(args) > 2 else ""
         entities = update.message.caption_entities or []
         command_length = len(f"/addsolexafilter {keyword} ")
-        # Create new entities with adjusted offsets
         adjusted_entities = [
             MessageEntity(
                 type=e.type,
