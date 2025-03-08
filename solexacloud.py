@@ -26,6 +26,9 @@ captcha_attempts = {}
 app = FastAPI()
 application = Application.builder().token(TOKEN).build()
 
+# Add a dictionary to store username-to-user_id mappings (our "notebook")
+user_id_cache = {}  # Format: {chat_id: {"username": user_id}}
+
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
     "PutVideoTriggerKeywordHere": "PutMp4FileNameHere.mp4",
@@ -146,23 +149,14 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
         if target_user.startswith("@"):
             username = target_user[1:].lower()
             logger.info(f"Resolving username: @{username} in chat {chat_id}")
-            try:
-                # Use get_chat_member to find the user by username
-                member = await context.bot.get_chat_member(chat_id, username=username)
-                user_id = member.user.id
-                logger.info(f"Found user @{username} with ID {user_id}")
+            # Check if we have the user in our cache
+            if chat_id in user_id_cache and username in user_id_cache[chat_id]:
+                user_id = user_id_cache[chat_id][username]
+                logger.info(f"Found user @{username} with ID {user_id} in cache")
                 return user_id
-            except BadRequest as e:
-                if "user not found" in str(e).lower():
-                    logger.warning(f"User @{username} not found in chat {chat_id}")
-                else:
-                    logger.error(f"Error resolving user @{username}: {e}")
-                return None
-            except Forbidden:
-                logger.error(f"Bot lacks permission to get chat member in chat {chat_id}")
-                return None
-            except Exception as e:
-                logger.error(f"Unexpected error resolving user @{username}: {e}")
+            else:
+                # User not in cache; they need to send a message first
+                logger.warning(f"User @{username} not found in cache for chat {chat_id}. They need to send a message first.")
                 return None
         else:
             user_id = int(target_user)
@@ -187,6 +181,12 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
             user_id = member.id
             username = member.username or member.first_name
             logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
+            # Add to user_id_cache
+            if chat_id not in user_id_cache:
+                user_id_cache[chat_id] = {}
+            if member.username:
+                user_id_cache[chat_id][member.username.lower()] = user_id
+                logger.info(f"Added {member.username} (ID: {user_id}) to cache for chat {chat_id}")
             permissions = ChatPermissions(can_send_messages=False)
             await context.bot.restrict_chat_member(chat_id, user_id, permissions)
             question, options, correct_answer = generate_captcha()
@@ -241,8 +241,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message or not update.message.text:
             return
-        message_text = update.message.text.strip().lower()
+        # Update user_id_cache with the sender's info
         chat_id = update.message.chat_id
+        user = update.message.from_user
+        if user.username:
+            if chat_id not in user_id_cache:
+                user_id_cache[chat_id] = {}
+            user_id_cache[chat_id][user.username.lower()] = user.id
+            logger.info(f"Updated cache: {user.username} (ID: {user.id}) in chat {chat_id}")
+        
+        message_text = update.message.text.strip().lower()
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
                 if message_text == keyword or message_text == f"/{keyword}":
@@ -323,11 +331,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Features:\n"
         "- Keywords: audio/video/profits/etc → media files\n"
         "- New members must solve captcha\n"
-        "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, etc\n"
+        "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, /unban, etc\n"
         "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
         "- Supports *bold*, _italics_, [hyperlinks](https://example.com), and links (use single * and _ for filters)\n"
         "- Filters trigger only on standalone keywords (e.g., 'x' or '/x')\n"
-        "- Reply to messages to target users or use /command @username\n"
+        "- Reply to messages to target users or use /command @username (user must have sent a message recently)\n"
         "- Contact admin for help"
     )
     await update.message.reply_text(help_text, parse_mode='MarkdownV2')
@@ -345,7 +353,7 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
                 if not user_id:
-                    await update.message.reply_text(f"Error: User {target_user} not found")
+                    await update.message.reply_text(f"Error: User {target_user} not found. They need to send a message first, or reply to their message.")
                     return
                 await context.bot.ban_chat_member(update.message.chat_id, user_id)
                 await update.message.reply_text(f"User {target_user} banned ✅")
@@ -369,7 +377,7 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
                 if not user_id:
-                    await update.message.reply_text(f"Error: User {target_user} not found")
+                    await update.message.reply_text(f"Error: User {target_user} not found. They need to send a message first, or reply to their message.")
                     return
                 await context.bot.ban_chat_member(update.message.chat_id, user_id)
                 await context.bot.unban_chat_member(update.message.chat_id, user_id, only_if_banned=True)
@@ -394,7 +402,7 @@ async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
                 if not user_id:
-                    await update.message.reply_text(f"Error: User {target_user} not found")
+                    await update.message.reply_text(f"Error: User {target_user} not found. They need to send a message first, or reply to their message.")
                     return
                 permissions = ChatPermissions(can_send_messages=False)
                 until = update.message.date + duration
@@ -429,7 +437,7 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
                 if not user_id:
-                    await update.message.reply_text(f"Error: User {target_user} not found")
+                    await update.message.reply_text(f"Error: User {target_user} not found. They need to send a message first, or reply to their message.")
                     return
                 await context.bot.unban_chat_member(update.message.chat_id, user_id)
                 await update.message.reply_text(f"User {target_user} unbanned ✅")
@@ -593,7 +601,7 @@ application.add_handler(CommandHandler("kick", kick_user))
 application.add_handler(CommandHandler("mute10", mute10))
 application.add_handler(CommandHandler("mute30", mute30))
 application.add_handler(CommandHandler("mute1hr", mute1hr))
-application.add_handler(CommandHandler("unban", unban_user))  # Added unban command
+application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION, add_media_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
