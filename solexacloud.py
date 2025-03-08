@@ -72,6 +72,11 @@ def save_filters():
     except Exception as e:
         logger.error(f"Error saving filters: {e}")
 
+def escape_markdown_v2(text):
+    """Escape reserved MarkdownV2 characters outside of formatting."""
+    reserved_chars = r"[_*[]()~`>#+-=|{}.!]"
+    return re.sub(r'(?<!\\)([' + reserved_chars + '])', r'\\\1', text)
+
 def generate_captcha():
     num1 = random.randint(1, 10)
     num2 = random.randint(1, 10)
@@ -213,7 +218,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
-                # Match only if the message is exactly the keyword (with or without slash)
                 if message_text == keyword or message_text == f"/{keyword}":
                     if isinstance(response, dict) and 'type' in response and 'file_id' in response:
                         media_type = response['type']
@@ -236,7 +240,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
         for keyword, media_file in keyword_responses.items():
-            if message_text == keyword:  # Match standalone for hardcoded keywords too
+            if message_text == keyword:
                 if not os.path.exists(media_file):
                     await update.message.reply_text(f"File missing: {media_file}")
                     return
@@ -264,7 +268,7 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
 
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
-                if message_text == f"/{keyword}":  # Exact match for commands
+                if message_text == f"/{keyword}":
                     if isinstance(response, dict) and 'type' in response and 'file_id' in response:
                         media_type = response['type']
                         file_id = response['file_id']
@@ -294,7 +298,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- New members must solve captcha\n"
         "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, etc\n"
         "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
-        "- Supports *bold*, _italics_, [hyperlinks](https://example.com), and links\n"
+        "- Supports *bold*, _italics_, [hyperlinks](https://example\\.com), and links\n"
         "- Filters trigger only on standalone keywords (e.g., 'x' or '/x')\n"
         "- Reply to messages to target users\n"
         "- Contact admin for help"
@@ -420,25 +424,27 @@ async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
-        if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-            await update.message.reply_text("No permission ❌")
-            return
-
         chat_id = update.message.chat_id
         logger.info(f"Processing media message in chat {chat_id}")
 
         if not update.message.caption or not update.message.caption.startswith('/addsolexafilter'):
             return  # Silently ignore non-command media
 
+        if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+            await update.message.reply_text("No permission ❌")
+            return
+
         caption = update.message.caption
-        args = caption.split(maxsplit=2)  # Split into command, keyword, and rest
+        args = caption.split(maxsplit=2)
         if len(args) < 2:
             await update.message.reply_text("Usage: Send media with caption '/addsolexafilter keyword [text]'")
             logger.warning("Insufficient arguments in media caption")
             return
 
         keyword = args[1].lower()
-        response_text = args[2] if len(args) > 2 else ""  # Preserve original formatting
+        response_text = args[2] if len(args) > 2 else ""
+        # Escape reserved characters for MarkdownV2
+        response_text = escape_markdown_v2(response_text)
 
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
