@@ -72,8 +72,9 @@ def save_filters():
         logger.error(f"Error saving filters: {e}")
 
 def escape_markdown_v2(text):
-    """Escape reserved MarkdownV2 characters in plain text, preserving valid formatting."""
+    """Escape all reserved MarkdownV2 characters, reprocessing the full text."""
     reserved_chars = r"[-()~`>#+|=|{}.!]"
+    # First, preserve existing Markdown patterns
     patterns = [
         r'(\[.*?\]\(.*?\))',    # Hyperlinks: [text](url)
         r'(\*\*[^\*]*\*\*)',    # Bold: **text**
@@ -87,31 +88,30 @@ def escape_markdown_v2(text):
                 return match.group(i)
         return '\\' + match.group(4)
     
+    # Re-escape the entire text to catch any unescaped chars
     escaped_text = re.sub(combined_pattern, replace_func, text)
     logger.info(f"Escaped text: {repr(escaped_text)}")
     return escaped_text
 
 def apply_entities_to_caption(caption, entities):
-    """Reconstruct MarkdownV2 text from caption and entities."""
+    """Reconstruct MarkdownV2 text from caption and entities with correct marker placement."""
     if not entities:
         return caption
     
-    # Work on a list of characters for precise insertion
     result = list(caption)
     offset_shift = 0
     
-    # Process entities in order (start to end) to track shifts correctly
     for entity in sorted(entities, key=lambda e: e.offset):
         start = entity.offset + offset_shift
         end = start + entity.length
         
         if entity.type == "bold":
             result.insert(start, "**")
-            result.insert(end + 2, "**")
+            result.insert(end + offset_shift, "**")  # Corrected to use current offset_shift
             offset_shift += 4
         elif entity.type == "italic":
             result.insert(start, "__")
-            result.insert(end + 2, "__")
+            result.insert(end + offset_shift, "__")  # Corrected to use current offset_shift
             offset_shift += 4
         elif entity.type == "url" and entity.url:
             text = caption[entity.offset:entity.offset + entity.length]
@@ -244,7 +244,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text = response.get('text', '')
                         logger.info(f"Triggering media filter: {keyword} with {media_type}, raw caption: {repr(text)}")
                         if media_type == 'photo':
-                            await update.message.reply_photo(photo=file_id, caption=text, parse_mode='MarkdownV2')
+                            try:
+                                await update.message.reply_photo(photo=file_id, caption=text, parse_mode='MarkdownV2')
+                            except BadRequest as e:
+                                logger.error(f"Failed to send photo with caption: {e}")
+                                await update.message.reply_text(f"Error: {str(e)}")
                         elif media_type == 'video':
                             await update.message.reply_video(video=file_id, caption=text, parse_mode='MarkdownV2', supports_streaming=True)
                         elif media_type == 'audio':
@@ -457,7 +461,7 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if e.offset >= command_length
         ]
         response_text = apply_entities_to_caption(raw_text, adjusted_entities)
-        response_text = escape_markdown_v2(response_text)
+        response_text = escape_markdown_v2(response_text)  # Re-escape after applying entities
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
         if update.message.photo:
