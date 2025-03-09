@@ -118,7 +118,7 @@ def save_welcome_state():
         logger.error(f"Error saving welcome state: {e}")
 
 def escape_markdown_v2(text):
-    reserved_chars = r"[-()~`>#+=|{}!.]"
+    reserved_chars = r"[-()~`>#+=|{}!.,]"
     for char in reserved_chars:
         text = text.replace(char, f"\\{char}")
     patterns = [r'(\[.*?\]\(.*?\))', r'(\*[^\*]*\*)', r'(_[^_]*_)']
@@ -134,27 +134,23 @@ def escape_markdown_v2(text):
 
 def parse_markdown_entities(text, command_length):
     entities = []
-    # Extract the text after the command
     text_to_parse = text[command_length:]
     offset_adjust = command_length
 
-    # Find bold (*text*)
     bold_pattern = r'\*(.*?)\*'
     for match in re.finditer(bold_pattern, text_to_parse):
         start = match.start() + offset_adjust
         length = len(match.group(1))
-        offset = start + 1  # Start of the actual text (after *)
+        offset = start + 1
         entities.append(MessageEntity(type="bold", offset=offset, length=length))
 
-    # Find italic (_text_)
     italic_pattern = r'_(.*?)_'
     for match in re.finditer(italic_pattern, text_to_parse):
         start = match.start() + offset_adjust
         length = len(match.group(1))
-        offset = start + 1  # Start of the actual text (after _)
+        offset = start + 1
         entities.append(MessageEntity(type="italic", offset=offset, length=length))
 
-    # Sort entities by offset
     entities.sort(key=lambda e: e.offset)
     logger.info(f"Parsed entities: {[entity.to_dict() for entity in entities]}")
     return entities
@@ -172,7 +168,6 @@ def apply_entities_to_caption(caption, entities):
             logger.warning(f"Entity out of bounds: {entity}, caption length: {len(result)}")
             continue
         entity_text = ''.join(result[start:end])
-        # Escape reserved characters within the entity text
         reserved_chars = r"[-()~`>#+=|{}!.,]"
         escaped_entity_text = entity_text
         for char in reserved_chars:
@@ -261,7 +256,8 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                     ws = welcome_state[chat_id]
                     text = ws["text"].replace("{username}", username)
-                    formatted_text = apply_entities_to_caption(text, ws["entities"])
+                    # Use escaped Markdown directly, bypassing entities
+                    formatted_text = escape_markdown_v2(text)
                     try:
                         if ws["type"] == "text":
                             msg = await context.bot.send_message(chat_id, formatted_text, parse_mode='MarkdownV2')
@@ -275,6 +271,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         save_welcome_state()
                     except Exception as e:
                         logger.error(f"Failed to send welcome with Markdown: {e}")
+                        # Fallback to plain text
                         if ws["type"] == "text":
                             msg = await context.bot.send_message(chat_id, text, parse_mode=None)
                         elif ws["type"] == "photo":
@@ -316,22 +313,10 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.restrict_chat_member(chat_id, target_user_id, permissions)
             await query.message.delete()
 
-            # Clear old welcome messages
-            if chat_id in welcome_state and "message_ids" in welcome_state[chat_id]:
-                for msg_id in welcome_state[chat_id]["message_ids"][:]:
-                    try:
-                        await context.bot.delete_message(chat_id, msg_id)
-                        welcome_state[chat_id]["message_ids"].remove(msg_id)
-                        logger.info(f"Successfully deleted old welcome message {msg_id}")
-                    except Exception as e:
-                        logger.error(f"Failed to delete welcome message {msg_id}: {e}")
-                welcome_state[chat_id]["message_ids"] = []  # Reset after attempts
-                save_welcome_state()
-
             if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                 ws = welcome_state[chat_id]
                 text = ws["text"].replace("{username}", username)
-                formatted_text = apply_entities_to_caption(text, ws["entities"])
+                formatted_text = escape_markdown_v2(text)
                 try:
                     if ws["type"] == "text":
                         msg = await context.bot.send_message(chat_id, formatted_text, parse_mode='MarkdownV2')
@@ -345,7 +330,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_welcome_state()
                 except Exception as e:
                     logger.error(f"Failed to send welcome with Markdown: {e}")
-                    # Fallback: Send with plain text but ensure media is sent
                     if ws["type"] == "text":
                         msg = await context.bot.send_message(chat_id, text, parse_mode=None)
                     elif ws["type"] == "photo":
@@ -355,6 +339,17 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     elif ws["type"] == "animation":
                         msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
                     welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
+                    save_welcome_state()
+
+                # Clear old welcome messages
+                if "message_ids" in welcome_state[chat_id]:
+                    for msg_id in welcome_state[chat_id]["message_ids"][:]:
+                        try:
+                            await context.bot.delete_message(chat_id, msg_id)
+                            welcome_state[chat_id]["message_ids"].remove(msg_id)
+                            logger.info(f"Successfully deleted old welcome message {msg_id}")
+                        except Exception as e:
+                            logger.error(f"Failed to delete welcome message {msg_id}: {e}")
                     save_welcome_state()
             else:
                 msg = await context.bot.send_message(chat_id, "✅ Verified!")
@@ -530,7 +525,7 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
                 return
             ws = welcome_state[chat_id]
             text = ws["text"].replace("{username}", update.message.from_user.username or update.message.from_user.first_name)
-            formatted_text = apply_entities_to_caption(text, ws["entities"])
+            formatted_text = escape_markdown_v2(text)
             try:
                 if ws["type"] == "text":
                     await update.message.reply_text(formatted_text, parse_mode='MarkdownV2')
@@ -552,8 +547,7 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
                     await update.message.reply_animation(ws["file_id"], caption=text, parse_mode=None)
     else:
         text = args[1]
-        entities = parse_markdown_entities(text, len("/setsolexawelcome "))
-        welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text, "entities": entities})
+        welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text, "entities": [], "message_ids": []})
         save_welcome_state()
         await update.message.reply_text("Welcome text set ✅")
 
@@ -572,17 +566,15 @@ async def setsolexawelcome_media(update: Update, context: ContextTypes.DEFAULT_T
 
     args = update.message.caption.split(maxsplit=1)
     raw_caption = args[1] if len(args) > 1 else ""
-    command_length = len("/setsolexawelcome ")  # Include the space after the command
-    entities = parse_markdown_entities(update.message.caption, command_length)
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
-        welcome_state[chat_id].update({"enabled": True, "type": "photo", "file_id": file_id, "text": raw_caption, "entities": entities})
+        welcome_state[chat_id].update({"enabled": True, "type": "photo", "file_id": file_id, "text": raw_caption, "entities": [], "message_ids": []})
     elif update.message.video:
         file_id = update.message.video.file_id
-        welcome_state[chat_id].update({"enabled": True, "type": "video", "file_id": file_id, "text": raw_caption, "entities": entities})
+        welcome_state[chat_id].update({"enabled": True, "type": "video", "file_id": file_id, "text": raw_caption, "entities": [], "message_ids": []})
     elif update.message.animation:
         file_id = update.message.animation.file_id
-        welcome_state[chat_id].update({"enabled": True, "type": "animation", "file_id": file_id, "text": raw_caption, "entities": entities})
+        welcome_state[chat_id].update({"enabled": True, "type": "animation", "file_id": file_id, "text": raw_caption, "entities": [], "message_ids": []})
     else:
         await update.message.reply_text("Unsupported media type")
         return
@@ -702,29 +694,28 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         keyword = args[1].lower()
         raw_text = args[2] if len(args) > 2 else ""
-        entities = parse_markdown_entities(raw_text, 0)  # No command to skip for filter text
-        response_text = apply_entities_to_caption(raw_text, entities)
+        escaped_text = escape_markdown_v2(raw_text)
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
         if update.message.photo:
             file_id = update.message.photo[-1].file_id
-            filters_dict[chat_id][keyword] = {'type': 'photo', 'file_id': file_id, 'text': response_text}
+            filters_dict[chat_id][keyword] = {'type': 'photo', 'file_id': file_id, 'text': escaped_text}
             await update.message.reply_text(f"Photo filter '{keyword}' added ✅")
         elif update.message.video:
             file_id = update.message.video.file_id
-            filters_dict[chat_id][keyword] = {'type': 'video', 'file_id': file_id, 'text': response_text}
+            filters_dict[chat_id][keyword] = {'type': 'video', 'file_id': file_id, 'text': escaped_text}
             await update.message.reply_text(f"Video filter '{keyword}' added ✅")
         elif update.message.audio:
             file_id = update.message.audio.file_id
-            filters_dict[chat_id][keyword] = {'type': 'audio', 'file_id': file_id, 'text': response_text}
+            filters_dict[chat_id][keyword] = {'type': 'audio', 'file_id': file_id, 'text': escaped_text}
             await update.message.reply_text(f"Audio filter '{keyword}' added ✅")
         elif update.message.animation:
             file_id = update.message.animation.file_id
-            filters_dict[chat_id][keyword] = {'type': 'animation', 'file_id': file_id, 'text': response_text}
+            filters_dict[chat_id][keyword] = {'type': 'animation', 'file_id': file_id, 'text': escaped_text}
             await update.message.reply_text(f"GIF filter '{keyword}' added ✅")
         elif update.message.voice:
             file_id = update.message.voice.file_id
-            filters_dict[chat_id][keyword] = {'type': 'voice', 'file_id': file_id, 'text': response_text}
+            filters_dict[chat_id][keyword] = {'type': 'voice', 'file_id': file_id, 'text': escaped_text}
             await update.message.reply_text(f"Voice filter '{keyword}' added ✅")
         else:
             await update.message.reply_text("No supported media type detected")
