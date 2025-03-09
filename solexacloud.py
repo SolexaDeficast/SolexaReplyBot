@@ -29,6 +29,10 @@ application = Application.builder().token(TOKEN).build()
 # Add a dictionary to store username-to-user_id mappings (our "notebook")
 user_id_cache = {}  # Format: {chat_id: {"username": user_id}}
 
+# Captcha state storage
+CAPTCHA_STATE_FILE = "/data/captcha_state.json"
+captcha_enabled = {}  # Format: {chat_id: True/False}
+
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
     "PutVideoTriggerKeywordHere": "PutMp4FileNameHere.mp4",
@@ -74,10 +78,32 @@ def save_filters():
     except Exception as e:
         logger.error(f"Error saving filters: {e}")
 
+def load_captcha_state():
+    global captcha_enabled
+    try:
+        if os.path.exists(CAPTCHA_STATE_FILE):
+            with open(CAPTCHA_STATE_FILE, 'r') as f:
+                data = json.load(f)
+                captcha_enabled = {int(chat_id): bool(state) for chat_id, state in data.items()}
+        else:
+            captcha_enabled = {}
+        logger.info(f"Captcha state loaded: {repr(captcha_enabled)}")
+    except Exception as e:
+        logger.error(f"Error loading captcha state: {e}")
+        captcha_enabled = {}
+
+def save_captcha_state():
+    try:
+        with open(CAPTCHA_STATE_FILE, 'w') as f:
+            serializable = {str(chat_id): state for chat_id, state in captcha_enabled.items()}
+            json.dump(serializable, f)
+        logger.info(f"Captcha state saved: {repr(captcha_enabled)}")
+    except Exception as e:
+        logger.error(f"Error saving captcha state: {e}")
+
 def escape_markdown_v2(text):
     """Escape all reserved MarkdownV2 characters, ensuring ! is always escaped."""
     reserved_chars = r"[-()~`>#+|=|{}.!]"
-    # Preserve existing Markdown patterns
     patterns = [
         r'(\[.*?\]\(.*?\))',    # Hyperlinks: [text](url)
         r'(\*\*[^\*]*\*\*)',    # Bold: **text**
@@ -90,7 +116,7 @@ def escape_markdown_v2(text):
             if match.group(i):
                 return match.group(i)
         char = match.group(4)
-        return '\\' + char  # Force escape of !
+        return '\\' + char
     
     escaped_text = re.sub(combined_pattern, replace_func, text)
     logger.info(f"Escaped text: {repr(escaped_text)}")
@@ -120,15 +146,14 @@ def apply_entities_to_caption(caption, entities):
             
         entity_text = ''.join(result[start:end])
         if entity.type == "bold":
-            new_text = f"*{entity_text}*"  # Single asterisk for bold
+            new_text = f"*{entity_text}*"
         elif entity.type == "italic":
-            new_text = f"_{entity_text}_"  # Single underscore for italic
+            new_text = f"_{entity_text}_"
         elif entity.type == "url" and entity.url:
             new_text = f"[{entity_text}]({entity.url})"
         else:
             new_text = entity_text
             
-        # Replace the entity text with formatted version
         del result[start:end]
         result[start:start] = list(new_text)
         offset_shift += len(new_text) - entity.length
@@ -155,14 +180,12 @@ async def resolve_user(chat_id: int, target_user: str, context: ContextTypes.DEF
         if target_user.startswith("@"):
             username = target_user[1:].lower()
             logger.info(f"Resolving username: @{username} in chat {chat_id}")
-            # Check if we have the user in our cache
             if chat_id in user_id_cache and username in user_id_cache[chat_id]:
                 user_id = user_id_cache[chat_id][username]
                 logger.info(f"Found user @{username} with ID {user_id} in cache")
                 return user_id
             else:
-                # User not in cache; they need to send a message first
-                logger.warning(f"User @{username} not found in cache for chat {chat_id}. They need to send a message first.")
+                logger.warning(f"User @{username} not found in cache for chat {chat_id}.")
                 return None
         else:
             user_id = int(target_user)
@@ -182,12 +205,19 @@ async def get_user_id_from_reply(update: Update) -> int or None:
 
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        chat_id = update.message.chat_id
+        # Check if captcha is enabled for this chat (default to True if not set)
+        if chat_id not in captcha_enabled:
+            captcha_enabled[chat_id] = True  # Default state is enabled
+            save_captcha_state()
+        if not captcha_enabled[chat_id]:
+            logger.info(f"Captcha is disabled in chat {chat_id}, skipping verification")
+            return  # Skip captcha if disabled
+
         for member in update.message.new_chat_members:
-            chat_id = update.message.chat_id
             user_id = member.id
             username = member.username or member.first_name
             logger.info(f"New member detected: {username} (ID: {user_id}) in {update.message.chat.title}")
-            # Add to user_id_cache
             if chat_id not in user_id_cache:
                 user_id_cache[chat_id] = {}
             if member.username:
@@ -247,7 +277,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not update.message or not update.message.text:
             return
-        # Update user_id_cache with the sender's info
         chat_id = update.message.chat_id
         user = update.message.from_user
         if user.username:
@@ -264,7 +293,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         media_type = response['type']
                         file_id = response['file_id']
                         text = response.get('text', '')
-                        # Escape the | character in the caption before sending
                         escaped_text = escape_pipe(text)
                         logger.info(f"Triggering media filter: {keyword} with {media_type}, escaped caption: {repr(escaped_text)}")
                         if media_type == 'photo':
@@ -318,7 +346,6 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
                         media_type = response['type']
                         file_id = response['file_id']
                         text = response.get('text', '')
-                        # Escape the | character in the caption before sending
                         escaped_text = escape_pipe(text)
                         logger.info(f"Command filter: {keyword} with {media_type}, escaped caption: {repr(escaped_text)}")
                         if media_type == 'photo':
@@ -344,7 +371,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "Features:\n"
         "- Keywords: audio/video/profits/etc → media files\n"
-        "- New members must solve captcha\n"
+        "- New members must solve captcha (toggle with /solexacaptcha ON|OFF)\n"
         "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, /unban, etc\n"
         "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
         "- Supports *bold*, _italics_, [hyperlinks](https://example.com), and links (use single * and _ for filters)\n"
@@ -353,6 +380,38 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Contact admin for help"
     )
     await update.message.reply_text(help_text, parse_mode='MarkdownV2')
+
+async def solexacaptcha_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type == "private":
+        await update.message.reply_text("Group-only command ❌")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await update.message.reply_text("No permission ❌")
+        return
+
+    chat_id = update.message.chat_id
+    if not context.args:
+        await update.message.reply_text("Usage: /solexacaptcha ON|OFF|status")
+        return
+
+    action = context.args[0].upper()
+    if action == "ON":
+        captcha_enabled[chat_id] = True
+        save_captcha_state()
+        await update.message.reply_text("Captcha enabled ✅")
+        logger.info(f"Captcha enabled for chat {chat_id}")
+    elif action == "OFF":
+        captcha_enabled[chat_id] = False
+        save_captcha_state()
+        await update.message.reply_text("Captcha disabled ✅")
+        logger.info(f"Captcha disabled for chat {chat_id}")
+    elif action == "STATUS":
+        state = captcha_enabled.get(chat_id, True)  # Default True if not set
+        status_text = "enabled" if state else "disabled"
+        await update.message.reply_text(f"Captcha is currently {status_text}")
+        logger.info(f"Captcha status requested for chat {chat_id}: {status_text}")
+    else:
+        await update.message.reply_text("Usage: /solexacaptcha ON|OFF|status")
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
@@ -367,7 +426,7 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
                 if not user_id:
-                    await update.message.reply_text(f"Error: User {target_user} not found. They need to send a message first, or reply to their message.")
+                    await update.message.reply_text(f"Error: User {target_user} not found.")
                     return
                 await context.bot.ban_chat_member(update.message.chat_id, user_id)
                 await update.message.reply_text(f"User {target_user} banned ✅")
@@ -391,7 +450,7 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
                 if not user_id:
-                    await update.message.reply_text(f"Error: User {target_user} not found. They need to send a message first, or reply to their message.")
+                    await update.message.reply_text(f"Error: User {target_user} not found.")
                     return
                 await context.bot.ban_chat_member(update.message.chat_id, user_id)
                 await context.bot.unban_chat_member(update.message.chat_id, user_id, only_if_banned=True)
@@ -416,7 +475,7 @@ async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
                 if not user_id:
-                    await update.message.reply_text(f"Error: User {target_user} not found. They need to send a message first, or reply to their message.")
+                    await update.message.reply_text(f"Error: User {target_user} not found.")
                     return
                 permissions = ChatPermissions(can_send_messages=False)
                 until = update.message.date + duration
@@ -451,7 +510,7 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     user_id = await resolve_user(update.message.chat_id, target_user, context)
                 if not user_id:
-                    await update.message.reply_text(f"Error: User {target_user} not found. They need to send a message first, or reply to their message.")
+                    await update.message.reply_text(f"Error: User {target_user} not found.")
                     return
                 await context.bot.unban_chat_member(update.message.chat_id, user_id)
                 await update.message.reply_text(f"User {target_user} unbanned ✅")
@@ -503,9 +562,8 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyword = args[1].lower()
         raw_text = args[2] if len(args) > 2 else ""
         entities = update.message.caption_entities or []
-        # Adjust entity offsets correctly
         command_prefix = f"/addsolexafilter {keyword}"
-        command_length = len(command_prefix) + 1  # +1 for the space after keyword
+        command_length = len(command_prefix) + 1
         adjusted_entities = []
         for e in entities:
             if e.offset < command_length:
@@ -532,7 +590,7 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             adjusted_entities.append(adjusted_entity)
         logger.info(f"Adjusted entities: {adjusted_entities}")
         response_text = apply_entities_to_caption(raw_text, adjusted_entities)
-        response_text = escape_markdown_v2(response_text)  # Re-escape after applying entities
+        response_text = escape_markdown_v2(response_text)
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
         if update.message.photo:
@@ -615,6 +673,7 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Group-only command ❌")
 
 application.add_handler(CommandHandler("help", help_command))
+application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("ban", ban_user))
 application.add_handler(CommandHandler("kick", kick_user))
 application.add_handler(CommandHandler("mute10", mute10))
@@ -641,6 +700,7 @@ async def telegram_webhook(request: Request):
 @app.on_event("startup")
 async def startup():
     load_filters()
+    load_captcha_state()  # Load captcha state on startup
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
