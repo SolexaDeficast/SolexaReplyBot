@@ -5,6 +5,7 @@ import random
 import re
 from datetime import timedelta
 from fastapi import FastAPI, Request
+from contextlib import asynccontextmanager
 import uvicorn
 from telegram import (
     Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, User, MessageEntity
@@ -49,21 +50,29 @@ blacklist_dict = {}  # {chat_id: {'terms': set(), 'users': {user_id: offense_cou
 
 def ensure_file_exists(file_path, default_content):
     if not os.path.exists(file_path):
-        with open(file_path, 'w') as f:
-            json.dump(default_content, f)
-        logger.info(f"Created default file: {file_path}")
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(default_content, f)
+            logger.info(f"Created default file: {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to create {file_path}: {e}")
 
 def load_state(file_path, state_dict, default_factory=lambda: {}):
     ensure_file_exists(file_path, {})
     try:
         with open(file_path, 'r') as f:
             data = json.load(f)
-            for chat_id, value in data.items():
-                chat_id = int(chat_id)
-                if file_path == BLACKLIST_FILE:
-                    value['terms'] = set(value['terms'])
-                    value['users'] = {int(k): v for k, v in value['users'].items()}
-                state_dict[chat_id] = value
+            if not data:  # Apply default_factory if the file is empty
+                logger.info(f"{file_path} is empty, applying default_factory")
+                state_dict.clear()
+                state_dict.update(default_factory())
+            else:
+                for chat_id, value in data.items():
+                    chat_id = int(chat_id)
+                    if file_path == BLACKLIST_FILE:
+                        value['terms'] = set(value['terms'])
+                        value['users'] = {int(k): v for k, v in value['users'].items()}
+                    state_dict[chat_id] = value
         logger.info(f"Loaded {file_path}: {repr(state_dict)}")
     except Exception as e:
         logger.error(f"Error loading {file_path}: {e}")
@@ -82,15 +91,21 @@ def save_state(file_path, state_dict):
     except Exception as e:
         logger.error(f"Error saving {file_path}: {e}")
 
-def load_filters(): load_state(FILTERS_FILE, filters_dict)
+def load_filters(): 
+    load_state(FILTERS_FILE, filters_dict)
+    logger.info(f"Filters loaded: {repr(filters_dict)}")
 def save_filters(): save_state(FILTERS_FILE, filters_dict)
-def load_cleanservice(): load_state(CLEANSERVICE_FILE, cleanservice_state, lambda: {chat_id: {'enabled': False, 'delay': 15} for chat_id in filters_dict})
+def load_cleanservice(): 
+    load_state(CLEANSERVICE_FILE, cleanservice_state, lambda: {-1002280396764: {'enabled': False, 'delay': 15} if not filters_dict else {chat_id: {'enabled': False, 'delay': 15} for chat_id in filters_dict.keys()}))
 def save_cleanservice(): save_state(CLEANSERVICE_FILE, cleanservice_state)
-def load_welcome(): load_state(WELCOME_FILE, welcome_dict, lambda: {chat_id: {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''} for chat_id in filters_dict})
+def load_welcome(): 
+    load_state(WELCOME_FILE, welcome_dict, lambda: {-1002280396764: {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''} if not filters_dict else {chat_id: {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''} for chat_id in filters_dict.keys()}))
 def save_welcome(): save_state(WELCOME_FILE, welcome_dict)
-def load_captcha(): load_state(CAPTCHA_FILE, captcha_state, lambda: {chat_id: True for chat_id in filters_dict})
+def load_captcha(): 
+    load_state(CAPTCHA_FILE, captcha_state, lambda: {-1002280396764: True if not filters_dict else {chat_id: True for chat_id in filters_dict.keys()}))
 def save_captcha(): save_state(CAPTCHA_FILE, captcha_state)
-def load_blacklist(): load_state(BLACKLIST_FILE, blacklist_dict, lambda: {chat_id: {'terms': set(), 'users': {}} for chat_id in filters_dict})
+def load_blacklist(): 
+    load_state(BLACKLIST_FILE, blacklist_dict, lambda: {-1002280396764: {'terms': set(), 'users': {}} if not filters_dict else {chat_id: {'terms': set(), 'users': {}} for chat_id in filters_dict.keys()}))
 def save_blacklist(): save_state(BLACKLIST_FILE, blacklist_dict)
 
 def escape_markdown_v2(text):
@@ -197,7 +212,10 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if chat_id in last_welcome_msg:
                 await delete_message(context, chat_id, last_welcome_msg[chat_id])
             # Send welcome
-            if chat_id in welcome_dict and welcome_dict[chat_id]['enabled']:
+            if chat_id not in welcome_dict:
+                welcome_dict[chat_id] = {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''}
+                logger.info(f"Initialized welcome_dict for {chat_id}: {welcome_dict[chat_id]}")
+            if welcome_dict[chat_id]['enabled']:
                 welcome = welcome_dict[chat_id]
                 text = welcome['text'].replace('{username}', username) if welcome['text'] else ""
                 text = escape_pipe(text)
@@ -211,7 +229,10 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     msg = await context.bot.send_animation(chat_id, welcome['file_id'], caption=text, parse_mode='MarkdownV2')
                 last_welcome_msg[chat_id] = msg.message_id
             # Captcha
-            if chat_id not in captcha_state or captcha_state[chat_id]:
+            if chat_id not in captcha_state:
+                captcha_state[chat_id] = True
+                logger.info(f"Initialized captcha_state for {chat_id}: {captcha_state[chat_id]}")
+            if captcha_state[chat_id]:
                 question, options, correct_answer = generate_captcha()
                 captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id}
                 keyboard = [[InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")] for opt in options]
@@ -279,7 +300,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if chat_id not in user_id_cache: user_id_cache[chat_id] = {}
             user_id_cache[chat_id][user.username.lower()] = user.id
         # Blacklist check
-        if chat_id in blacklist_dict and blacklist_dict[chat_id]['terms']:
+        if chat_id not in blacklist_dict:
+            blacklist_dict[chat_id] = {'terms': set(), 'users': {}}
+            logger.info(f"Initialized blacklist_dict for {chat_id}: {blacklist_dict[chat_id]}")
+        if blacklist_dict[chat_id]['terms']:
             message_text = update.message.text.lower()
             for term in blacklist_dict[chat_id]['terms']:
                 if term in message_text:
@@ -380,313 +404,385 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
 async def solexacleanservice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     logger.info(f"Processing /solexacleanservice in {chat_id}")
-    if not await is_admin(update.message.from_user.id, chat_id, context):
-        await update.message.reply_text("No permission ❌")
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /solexacleanservice on [seconds] | off | status")
-        return
-    action = context.args[0].lower()
-    if chat_id not in cleanservice_state: cleanservice_state[chat_id] = {'enabled': False, 'delay': 15}
-    if action == 'on':
-        delay = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else 15
-        if delay < 1 or delay > 3600:
-            await update.message.reply_text("Delay must be between 1 and 3600 seconds")
+    try:
+        if not await is_admin(update.message.from_user.id, chat_id, context):
+            await update.message.reply_text("No permission ❌")
             return
-        cleanservice_state[chat_id] = {'enabled': True, 'delay': delay}
-        await update.message.reply_text(f"Cleanservice ON, delay: {delay} seconds ✅")
-    elif action == 'off':
-        cleanservice_state[chat_id]['enabled'] = False
-        await update.message.reply_text("Cleanservice OFF ✅")
-    elif action == 'status':
-        state = cleanservice_state[chat_id]
-        status = "ON" if state['enabled'] else "OFF"
-        await update.message.reply_text(f"Cleanservice: {status}, delay: {state['delay']} seconds")
-    else:
-        await update.message.reply_text("Usage: /solexacleanservice on [seconds] | off | status")
-    save_cleanservice()
+        if chat_id not in cleanservice_state:
+            cleanservice_state[chat_id] = {'enabled': False, 'delay': 15}
+            logger.info(f"Initialized cleanservice_state for {chat_id}: {cleanservice_state[chat_id]}")
+            save_cleanservice()
+        if not context.args:
+            await update.message.reply_text("Usage: /solexacleanservice on [seconds] | off | status")
+            return
+        action = context.args[0].lower()
+        if action == 'on':
+            delay = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else 15
+            if delay < 1 or delay > 3600:
+                await update.message.reply_text("Delay must be between 1 and 3600 seconds")
+                return
+            cleanservice_state[chat_id] = {'enabled': True, 'delay': delay}
+            await update.message.reply_text(f"Cleanservice ON, delay: {delay} seconds ✅")
+        elif action == 'off':
+            cleanservice_state[chat_id]['enabled'] = False
+            await update.message.reply_text("Cleanservice OFF ✅")
+        elif action == 'status':
+            state = cleanservice_state[chat_id]
+            status = "ON" if state['enabled'] else "OFF"
+            await update.message.reply_text(f"Cleanservice: {status}, delay: {state['delay']} seconds")
+        else:
+            await update.message.reply_text("Usage: /solexacleanservice on [seconds] | off | status")
+        save_cleanservice()
+    except Exception as e:
+        logger.error(f"Error in /solexacleanservice: {e}")
+        await update.message.reply_text("An error occurred. Check logs.")
 
 async def setsolexawelcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     logger.info(f"Processing /setsolexawelcome in {chat_id}")
-    if not await is_admin(update.message.from_user.id, chat_id, context):
-        await update.message.reply_text("No permission ❌")
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /setsolexawelcome on | off | set [text]")
-        return
-    action = context.args[0].lower()
-    if chat_id not in welcome_dict: welcome_dict[chat_id] = {'enabled': False, 'type': 'text', 'file_id': None, 'text': ""}
-    if action == 'on':
-        welcome_dict[chat_id]['enabled'] = True
-        await update.message.reply_text("Welcome message ON ✅")
-    elif action == 'off':
-        welcome_dict[chat_id]['enabled'] = False
-        await update.message.reply_text("Welcome message OFF ✅")
-    elif action == 'set':
-        if len(context.args) < 2 and not (update.message.photo or update.message.video or update.message.animation):
-            await update.message.reply_text("Usage: /setsolexawelcome set [text] or send media with caption")
+    try:
+        if not await is_admin(update.message.from_user.id, chat_id, context):
+            await update.message.reply_text("No permission ❌")
             return
-        if update.message.photo or update.message.video or update.message.animation:
-            caption = update.message.caption or ""
-            args = caption.split(maxsplit=2)
-            if len(args) < 2 or args[0].lower() != '/setsolexawelcome' or args[1].lower() != 'set':
-                await update.message.reply_text("Caption must start with '/setsolexawelcome set'")
+        if chat_id not in welcome_dict:
+            welcome_dict[chat_id] = {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''}
+            logger.info(f"Initialized welcome_dict for {chat_id}: {welcome_dict[chat_id]}")
+            save_welcome()
+        if not context.args:
+            await update.message.reply_text("Usage: /setsolexawelcome on | off | set [text]")
+            return
+        action = context.args[0].lower()
+        if action == 'on':
+            welcome_dict[chat_id]['enabled'] = True
+            await update.message.reply_text("Welcome message ON ✅")
+        elif action == 'off':
+            welcome_dict[chat_id]['enabled'] = False
+            await update.message.reply_text("Welcome message OFF ✅")
+        elif action == 'set':
+            if len(context.args) < 2 and not (update.message.photo or update.message.video or update.message.animation):
+                await update.message.reply_text("Usage: /setsolexawelcome set [text] or send media with caption")
                 return
-            raw_text = args[2] if len(args) > 2 else ""
-            entities = update.message.caption_entities or []
-            command_length = len("/setsolexawelcome set") + 1
-            adjusted_entities = [
-                MessageEntity(type=e.type, offset=e.offset - command_length, length=e.length, url=e.url)
-                for e in entities if e.offset >= command_length
-            ]
-            response_text = apply_entities_to_caption(raw_text, adjusted_entities)
-            response_text = escape_markdown_v2(response_text)
-            if update.message.photo:
-                welcome_dict[chat_id] = {'enabled': True, 'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'text': response_text}
-                await update.message.reply_text(f"Photo welcome set ✅")
-            elif update.message.video:
-                welcome_dict[chat_id] = {'enabled': True, 'type': 'video', 'file_id': update.message.video.file_id, 'text': response_text}
-                await update.message.reply_text(f"Video welcome set ✅")
-            elif update.message.animation:
-                welcome_dict[chat_id] = {'enabled': True, 'type': 'animation', 'file_id': update.message.animation.file_id, 'text': response_text}
-                await update.message.reply_text(f"GIF welcome set ✅")
-        else:
-            text = " ".join(context.args[1:])
-            welcome_dict[chat_id] = {'enabled': True, 'type': 'text', 'file_id': None, 'text': escape_markdown_v2(text)}
-            await update.message.reply_text("Text welcome set ✅")
-    save_welcome()
+            if update.message.photo or update.message.video or update.message.animation:
+                caption = update.message.caption or ""
+                args = caption.split(maxsplit=2)
+                if len(args) < 2 or args[0].lower() != '/setsolexawelcome' or args[1].lower() != 'set':
+                    await update.message.reply_text("Caption must start with '/setsolexawelcome set'")
+                    return
+                raw_text = args[2] if len(args) > 2 else ""
+                entities = update.message.caption_entities or []
+                command_length = len("/setsolexawelcome set") + 1
+                adjusted_entities = [
+                    MessageEntity(type=e.type, offset=e.offset - command_length, length=e.length, url=e.url)
+                    for e in entities if e.offset >= command_length
+                ]
+                response_text = apply_entities_to_caption(raw_text, adjusted_entities)
+                response_text = escape_markdown_v2(response_text)
+                if update.message.photo:
+                    welcome_dict[chat_id] = {'enabled': True, 'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'text': response_text}
+                    await update.message.reply_text(f"Photo welcome set ✅")
+                elif update.message.video:
+                    welcome_dict[chat_id] = {'enabled': True, 'type': 'video', 'file_id': update.message.video.file_id, 'text': response_text}
+                    await update.message.reply_text(f"Video welcome set ✅")
+                elif update.message.animation:
+                    welcome_dict[chat_id] = {'enabled': True, 'type': 'animation', 'file_id': update.message.animation.file_id, 'text': response_text}
+                    await update.message.reply_text(f"GIF welcome set ✅")
+            else:
+                text = " ".join(context.args[1:])
+                welcome_dict[chat_id] = {'enabled': True, 'type': 'text', 'file_id': None, 'text': escape_markdown_v2(text)}
+                await update.message.reply_text("Text welcome set ✅")
+        save_welcome()
+    except Exception as e:
+        logger.error(f"Error in /setsolexawelcome: {e}")
+        await update.message.reply_text("An error occurred. Check logs.")
 
 async def showsolexawelcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     user_id = update.message.from_user.id
     logger.info(f"Processing /showsolexawelcome in {chat_id}")
-    if not await is_admin(user_id, chat_id, context):
-        await update.message.reply_text("No permission ❌")
-        return
-    if chat_id not in welcome_dict or not welcome_dict[chat_id]['enabled']:
-        await update.message.reply_text("No welcome message set or enabled")
-        return
-    welcome = welcome_dict[chat_id]
-    text = welcome['text'].replace('{username}', update.message.from_user.username or "You") if welcome['text'] else ""
-    text = escape_pipe(text)
-    if welcome['type'] == 'text':
-        await context.bot.send_message(user_id, text, parse_mode='MarkdownV2')
-    elif welcome['type'] == 'photo':
-        await context.bot.send_photo(user_id, welcome['file_id'], caption=text, parse_mode='MarkdownV2')
-    elif welcome['type'] == 'video':
-        await context.bot.send_video(user_id, welcome['file_id'], caption=text, parse_mode='MarkdownV2', supports_streaming=True)
-    elif welcome['type'] == 'animation':
-        await context.bot.send_animation(user_id, welcome['file_id'], caption=text, parse_mode='MarkdownV2')
-    await update.message.reply_text("Welcome message preview sent to your DM ✅")
+    try:
+        if not await is_admin(user_id, chat_id, context):
+            await update.message.reply_text("No permission ❌")
+            return
+        if chat_id not in welcome_dict:
+            welcome_dict[chat_id] = {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''}
+            logger.info(f"Initialized welcome_dict for {chat_id}: {welcome_dict[chat_id]}")
+            save_welcome()
+        if not welcome_dict[chat_id]['enabled']:
+            await update.message.reply_text("No welcome message set or enabled")
+            return
+        welcome = welcome_dict[chat_id]
+        text = welcome['text'].replace('{username}', update.message.from_user.username or "You") if welcome['text'] else ""
+        text = escape_pipe(text)
+        if welcome['type'] == 'text':
+            await context.bot.send_message(user_id, text, parse_mode='MarkdownV2')
+        elif welcome['type'] == 'photo':
+            await context.bot.send_photo(user_id, welcome['file_id'], caption=text, parse_mode='MarkdownV2')
+        elif welcome['type'] == 'video':
+            await context.bot.send_video(user_id, welcome['file_id'], caption=text, parse_mode='MarkdownV2', supports_streaming=True)
+        elif welcome['type'] == 'animation':
+            await context.bot.send_animation(user_id, welcome['file_id'], caption=text, parse_mode='MarkdownV2')
+        await update.message.reply_text("Welcome message preview sent to your DM ✅")
+    except Exception as e:
+        logger.error(f"Error in /showsolexawelcome: {e}")
+        await update.message.reply_text("An error occurred. Check logs.")
 
 async def setcaptcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     logger.info(f"Processing /setcaptcha in {chat_id}")
-    if not await is_admin(update.message.from_user.id, chat_id, context):
-        await update.message.reply_text("No permission ❌")
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /setcaptcha on | off | status")
-        return
-    action = context.args[0].lower()
-    if chat_id not in captcha_state: captcha_state[chat_id] = True
-    if action == 'on':
-        captcha_state[chat_id] = True
-        await update.message.reply_text("Captcha ON ✅")
-    elif action == 'off':
-        captcha_state[chat_id] = False
-        await update.message.reply_text("Captcha OFF ✅")
-    elif action == 'status':
-        status = "ON" if captcha_state[chat_id] else "OFF"
-        await update.message.reply_text(f"Captcha: {status}")
-    save_captcha()
+    try:
+        if not await is_admin(update.message.from_user.id, chat_id, context):
+            await update.message.reply_text("No permission ❌")
+            return
+        if chat_id not in captcha_state:
+            captcha_state[chat_id] = True
+            logger.info(f"Initialized captcha_state for {chat_id}: {captcha_state[chat_id]}")
+            save_captcha()
+        if not context.args:
+            await update.message.reply_text("Usage: /setcaptcha on | off | status")
+            return
+        action = context.args[0].lower()
+        if action == 'on':
+            captcha_state[chat_id] = True
+            await update.message.reply_text("Captcha ON ✅")
+        elif action == 'off':
+            captcha_state[chat_id] = False
+            await update.message.reply_text("Captcha OFF ✅")
+        elif action == 'status':
+            status = "ON" if captcha_state[chat_id] else "OFF"
+            await update.message.reply_text(f"Captcha: {status}")
+        save_captcha()
+    except Exception as e:
+        logger.error(f"Error in /setcaptcha: {e}")
+        await update.message.reply_text("An error occurred. Check logs.")
 
 async def testfilter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     user_id = update.message.from_user.id
     logger.info(f"Processing /testfilter in {chat_id}")
-    if not await is_admin(user_id, chat_id, context):
-        await update.message.reply_text("No permission ❌")
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /testfilter keyword")
-        return
-    keyword = context.args[0].lower()
-    if chat_id not in filters_dict or keyword not in filters_dict[chat_id]:
-        await update.message.reply_text("Filter not found ❌")
-        return
-    response = filters_dict[chat_id][keyword]
-    if isinstance(response, dict) and 'type' in response and 'file_id' in response:
-        media_type = response['type']
-        file_id = response['file_id']
-        text = response.get('text', '')
-        escaped_text = escape_pipe(text)
-        if media_type == 'photo':
-            await context.bot.send_photo(user_id, file_id, caption=escaped_text, parse_mode='MarkdownV2')
-        elif media_type == 'video':
-            await context.bot.send_video(user_id, file_id, caption=escaped_text, parse_mode='MarkdownV2', supports_streaming=True)
-        elif media_type == 'audio':
-            await context.bot.send_audio(user_id, file_id, caption=escaped_text, parse_mode='MarkdownV2')
-        elif media_type == 'animation':
-            await context.bot.send_animation(user_id, file_id, caption=escaped_text, parse_mode='MarkdownV2')
-        elif media_type == 'voice':
-            await context.bot.send_voice(user_id, file_id, caption=escaped_text, parse_mode='MarkdownV2')
-    elif isinstance(response, str):
-        await context.bot.send_message(user_id, response, parse_mode='MarkdownV2')
-    await update.message.reply_text(f"Filter '{keyword}' preview sent to your DM ✅")
+    try:
+        if not await is_admin(user_id, chat_id, context):
+            await update.message.reply_text("No permission ❌")
+            return
+        if not context.args:
+            await update.message.reply_text("Usage: /testfilter keyword")
+            return
+        keyword = context.args[0].lower()
+        if chat_id not in filters_dict or keyword not in filters_dict[chat_id]:
+            await update.message.reply_text("Filter not found ❌")
+            return
+        response = filters_dict[chat_id][keyword]
+        if isinstance(response, dict) and 'type' in response and 'file_id' in response:
+            media_type = response['type']
+            file_id = response['file_id']
+            text = response.get('text', '')
+            escaped_text = escape_pipe(text)
+            if media_type == 'photo':
+                await context.bot.send_photo(user_id, file_id, caption=escaped_text, parse_mode='MarkdownV2')
+            elif media_type == 'video':
+                await context.bot.send_video(user_id, file_id, caption=escaped_text, parse_mode='MarkdownV2', supports_streaming=True)
+            elif media_type == 'audio':
+                await context.bot.send_audio(user_id, file_id, caption=escaped_text, parse_mode='MarkdownV2')
+            elif media_type == 'animation':
+                await context.bot.send_animation(user_id, file_id, caption=escaped_text, parse_mode='MarkdownV2')
+            elif media_type == 'voice':
+                await context.bot.send_voice(user_id, file_id, caption=escaped_text, parse_mode='MarkdownV2')
+        elif isinstance(response, str):
+            await context.bot.send_message(user_id, response, parse_mode='MarkdownV2')
+        await update.message.reply_text(f"Filter '{keyword}' preview sent to your DM ✅")
+    except Exception as e:
+        logger.error(f"Error in /testfilter: {e}")
+        await update.message.reply_text("An error occurred. Check logs.")
 
 async def addsolexablacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     logger.info(f"Processing /addsolexablacklist in {chat_id}")
-    if not await is_admin(update.message.from_user.id, chat_id, context):
-        await update.message.reply_text("No permission ❌")
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /addsolexablacklist keyword")
-        return
-    keyword = context.args[0].lower()
-    if chat_id not in blacklist_dict: blacklist_dict[chat_id] = {'terms': set(), 'users': {}}
-    blacklist_dict[chat_id]['terms'].add(keyword)
-    save_blacklist()
-    await update.message.reply_text(f"Blacklist term '{keyword}' added ✅")
+    try:
+        if not await is_admin(update.message.from_user.id, chat_id, context):
+            await update.message.reply_text("No permission ❌")
+            return
+        if chat_id not in blacklist_dict:
+            blacklist_dict[chat_id] = {'terms': set(), 'users': {}}
+            logger.info(f"Initialized blacklist_dict for {chat_id}: {blacklist_dict[chat_id]}")
+            save_blacklist()
+        if not context.args:
+            await update.message.reply_text("Usage: /addsolexablacklist keyword")
+            return
+        keyword = context.args[0].lower()
+        blacklist_dict[chat_id]['terms'].add(keyword)
+        save_blacklist()
+        await update.message.reply_text(f"Blacklist term '{keyword}' added ✅")
+    except Exception as e:
+        logger.error(f"Error in /addsolexablacklist: {e}")
+        await update.message.reply_text("An error occurred. Check logs.")
 
 async def removesolexablacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     logger.info(f"Processing /removesolexablacklist in {chat_id}")
-    if not await is_admin(update.message.from_user.id, chat_id, context):
-        await update.message.reply_text("No permission ❌")
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /removesolexablacklist keyword")
-        return
-    keyword = context.args[0].lower()
-    if chat_id in blacklist_dict and keyword in blacklist_dict[chat_id]['terms']:
-        blacklist_dict[chat_id]['terms'].remove(keyword)
-        save_blacklist()
-        await update.message.reply_text(f"Blacklist term '{keyword}' removed ✅")
-    else:
-        await update.message.reply_text("Term not found ❌")
+    try:
+        if not await is_admin(update.message.from_user.id, chat_id, context):
+            await update.message.reply_text("No permission ❌")
+            return
+        if chat_id not in blacklist_dict:
+            blacklist_dict[chat_id] = {'terms': set(), 'users': {}}
+            logger.info(f"Initialized blacklist_dict for {chat_id}: {blacklist_dict[chat_id]}")
+            save_blacklist()
+        if not context.args:
+            await update.message.reply_text("Usage: /removesolexablacklist keyword")
+            return
+        keyword = context.args[0].lower()
+        if keyword in blacklist_dict[chat_id]['terms']:
+            blacklist_dict[chat_id]['terms'].remove(keyword)
+            save_blacklist()
+            await update.message.reply_text(f"Blacklist term '{keyword}' removed ✅")
+        else:
+            await update.message.reply_text("Term not found ❌")
+    except Exception as e:
+        logger.error(f"Error in /removesolexablacklist: {e}")
+        await update.message.reply_text("An error occurred. Check logs.")
 
 async def viewsolexablacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     logger.info(f"Processing /viewsolexablacklist in {chat_id}")
-    if not await is_admin(update.message.from_user.id, chat_id, context):
-        await update.message.reply_text("No permission ❌")
-        return
-    if chat_id not in blacklist_dict or not blacklist_dict[chat_id]['terms']:
-        await update.message.reply_text("No blacklist terms set")
-        return
-    terms = ", ".join(sorted(blacklist_dict[chat_id]['terms']))
-    await update.message.reply_text(f"Blacklist terms: {terms}")
+    try:
+        if not await is_admin(update.message.from_user.id, chat_id, context):
+            await update.message.reply_text("No permission ❌")
+            return
+        if chat_id not in blacklist_dict:
+            blacklist_dict[chat_id] = {'terms': set(), 'users': {}}
+            logger.info(f"Initialized blacklist_dict for {chat_id}: {blacklist_dict[chat_id]}")
+            save_blacklist()
+        if not blacklist_dict[chat_id]['terms']:
+            await update.message.reply_text("No blacklist terms set")
+            return
+        terms = ", ".join(sorted(blacklist_dict[chat_id]['terms']))
+        await update.message.reply_text(f"Blacklist terms: {terms}")
+    except Exception as e:
+        logger.error(f"Error in /viewsolexablacklist: {e}")
+        await update.message.reply_text("An error occurred. Check logs.")
 
 async def solexaunmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     logger.info(f"Processing /solexaunmute in {chat_id}")
-    if not await is_admin(update.message.from_user.id, chat_id, context):
-        await update.message.reply_text("No permission ❌")
-        return
-    if not context.args and not update.message.reply_to_message:
-        await update.message.reply_text("Usage: /solexaunmute @username or reply to a message")
-        return
-    target_user = context.args[0] if context.args else None
-    if not target_user:
-        user_id = await get_user_id_from_reply(update)
-    else:
-        user_id = await resolve_user(chat_id, target_user, context)
-    if not user_id:
-        await update.message.reply_text(f"Error: User not found. They need to send a message first or reply to their message.")
-        return
-    permissions = ChatPermissions(
-        can_send_messages=True, can_send_photos=True, can_send_videos=True,
-        can_send_other_messages=True, can_send_polls=True, can_add_web_page_previews=True
-    )
-    await context.bot.restrict_chat_member(chat_id, user_id, permissions)
-    await update.message.reply_text(f"User unmuted ✅")
+    try:
+        if not await is_admin(update.message.from_user.id, chat_id, context):
+            await update.message.reply_text("No permission ❌")
+            return
+        if not context.args and not update.message.reply_to_message:
+            await update.message.reply_text("Usage: /solexaunmute @username or reply to a message")
+            return
+        target_user = context.args[0] if context.args else None
+        if not target_user:
+            user_id = await get_user_id_from_reply(update)
+        else:
+            user_id = await resolve_user(chat_id, target_user, context)
+        if not user_id:
+            await update.message.reply_text(f"Error: User not found. They need to send a message first or reply to their message.")
+            return
+        permissions = ChatPermissions(
+            can_send_messages=True, can_send_photos=True, can_send_videos=True,
+            can_send_other_messages=True, can_send_polls=True, can_add_web_page_previews=True
+        )
+        await context.bot.restrict_chat_member(chat_id, user_id, permissions)
+        await update.message.reply_text(f"User unmuted ✅")
+    except Exception as e:
+        logger.error(f"Error in /solexaunmute: {e}")
+        await update.message.reply_text("An error occurred. Check logs.")
 
 async def adminhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     logger.info(f"Processing /adminhelp in {chat_id}")
-    if not await is_admin(update.message.from_user.id, chat_id, context):
-        await update.message.reply_text("No permission ❌")
-        return
-    keyboard = [
-        [InlineKeyboardButton("Commands", callback_data="adminhelp_commands")],
-        [InlineKeyboardButton("Filters", callback_data="adminhelp_filters")],
-        [InlineKeyboardButton("Settings", callback_data="adminhelp_settings")],
-        [InlineKeyboardButton("Formatting", callback_data="adminhelp_formatting")]
-    ]
-    await update.message.reply_text("Admin Help Menu: Choose a section", reply_markup=InlineKeyboardMarkup(keyboard))
+    try:
+        if not await is_admin(update.message.from_user.id, chat_id, context):
+            await update.message.reply_text("No permission ❌")
+            return
+        keyboard = [
+            [InlineKeyboardButton("Commands", callback_data="adminhelp_commands")],
+            [InlineKeyboardButton("Filters", callback_data="adminhelp_filters")],
+            [InlineKeyboardButton("Settings", callback_data="adminhelp_settings")],
+            [InlineKeyboardButton("Formatting", callback_data="adminhelp_formatting")]
+        ]
+        await update.message.reply_text("Admin Help Menu: Choose a section", reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e:
+        logger.error(f"Error in /adminhelp: {e}")
+        await update.message.reply_text("An error occurred. Check logs.")
 
 async def adminhelp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat_id
     logger.info(f"Processing adminhelp callback in {chat_id}")
-    if not await is_admin(query.from_user.id, chat_id, context):
-        await query.answer("No permission ❌", show_alert=True)
-        return
-    section = query.data.split("_")[1]
-    if section == "commands":
-        text = (
-            "*Admin Commands:*\n"
-            "- /ban @user - Ban a user (or reply)\n"
-            "- /kick @user - Kick a user (or reply)\n"
-            "- /mute10 @user - Mute for 10 mins (or reply)\n"
-            "- /mute30 @user - Mute for 30 mins (or reply)\n"
-            "- /mute1hr @user - Mute for 1 hour (or reply)\n"
-            "- /unban @user - Unban a user (or reply)\n"
-            "- /solexaunmute @user - Unmute a user (or reply)"
-        )
-    elif section == "filters":
-        text = (
-            "*Filters:*\n"
-            "- /addsolexafilter keyword text - Add text filter\n"
-            "- Send media with '/addsolexafilter keyword [text]' - Add media filter\n"
-            "- /listsolexafilters - List filters\n"
-            "- /removesolexafilter keyword - Remove filter\n"
-            "- /testfilter keyword - Preview filter in DM"
-        )
-    elif section == "settings":
-        text = (
-            "*Settings:*\n"
-            "- /solexacleanservice on [seconds] - Clean 'Verified' messages\n"
-            "- /solexacleanservice off | status - Toggle or check\n"
-            "- /setsolexawelcome on | off - Toggle welcome\n"
-            "- /setsolexawelcome set [text] - Set text welcome\n"
-            "- Media with '/setsolexawelcome set [text]' - Set media welcome\n"
-            "- /showsolexawelcome - Preview welcome in DM\n"
-            "- /setcaptcha on | off | status - Toggle captcha\n"
-            "- /addsolexablacklist keyword - Add blacklist term\n"
-            "- /removesolexablacklist keyword - Remove term\n"
-            "- /viewsolexablacklist - List terms"
-        )
-    elif section == "formatting":
-        text = (
-            "*Formatting:*\n"
-            "- *text* - Bold\n"
-            "- _text_ - Italics\n"
-            "- [text](url) - Hyperlink\n"
-            "- Use \\| for | character"
-        )
-    keyboard = [[InlineKeyboardButton("Back", callback_data="adminhelp_back")]]
-    await query.edit_message_text(text, parse_mode='MarkdownV2', reply_markup=InlineKeyboardMarkup(keyboard))
-    await query.answer()
+    try:
+        if not await is_admin(query.from_user.id, chat_id, context):
+            await query.answer("No permission ❌", show_alert=True)
+            return
+        section = query.data.split("_")[1]
+        if section == "commands":
+            text = (
+                "*Admin Commands:*\n"
+                "- /ban @user - Ban a user (or reply)\n"
+                "- /kick @user - Kick a user (or reply)\n"
+                "- /mute10 @user - Mute for 10 mins (or reply)\n"
+                "- /mute30 @user - Mute for 30 mins (or reply)\n"
+                "- /mute1hr @user - Mute for 1 hour (or reply)\n"
+                "- /unban @user - Unban a user (or reply)\n"
+                "- /solexaunmute @user - Unmute a user (or reply)"
+            )
+        elif section == "filters":
+            text = (
+                "*Filters:*\n"
+                "- /addsolexafilter keyword text - Add text filter\n"
+                "- Send media with '/addsolexafilter keyword [text]' - Add media filter\n"
+                "- /listsolexafilters - List filters\n"
+                "- /removesolexafilter keyword - Remove filter\n"
+                "- /testfilter keyword - Preview filter in DM"
+            )
+        elif section == "settings":
+            text = (
+                "*Settings:*\n"
+                "- /solexacleanservice on [seconds] - Clean 'Verified' messages\n"
+                "- /solexacleanservice off | status - Toggle or check\n"
+                "- /setsolexawelcome on | off - Toggle welcome\n"
+                "- /setsolexawelcome set [text] - Set text welcome\n"
+                "- Media with '/setsolexawelcome set [text]' - Set media welcome\n"
+                "- /showsolexawelcome - Preview welcome in DM\n"
+                "- /setcaptcha on | off | status - Toggle captcha\n"
+                "- /addsolexablacklist keyword - Add blacklist term\n"
+                "- /removesolexablacklist keyword - Remove term\n"
+                "- /viewsolexablacklist - List terms"
+            )
+        elif section == "formatting":
+            text = (
+                "*Formatting:*\n"
+                "- *text* - Bold\n"
+                "- _text_ - Italics\n"
+                "- [text](url) - Hyperlink\n"
+                "- Use \\| for | character"
+            )
+        keyboard = [[InlineKeyboardButton("Back", callback_data="adminhelp_back")]]
+        await query.edit_message_text(text, parse_mode='MarkdownV2', reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.answer()
+    except Exception as e:
+        logger.error(f"Error in adminhelp callback: {e}")
+        await query.answer("An error occurred. Check logs.", show_alert=True)
 
 async def adminhelp_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat_id
     logger.info(f"Processing adminhelp back in {chat_id}")
-    if not await is_admin(query.from_user.id, chat_id, context):
-        await query.answer("No permission ❌", show_alert=True)
-        return
-    keyboard = [
-        [InlineKeyboardButton("Commands", callback_data="adminhelp_commands")],
-        [InlineKeyboardButton("Filters", callback_data="adminhelp_filters")],
-        [InlineKeyboardButton("Settings", callback_data="adminhelp_settings")],
-        [InlineKeyboardButton("Formatting", callback_data="adminhelp_formatting")]
-    ]
-    await query.edit_message_text("Admin Help Menu: Choose a section", reply_markup=InlineKeyboardMarkup(keyboard))
-    await query.answer()
+    try:
+        if not await is_admin(query.from_user.id, chat_id, context):
+            await query.answer("No permission ❌", show_alert=True)
+            return
+        keyboard = [
+            [InlineKeyboardButton("Commands", callback_data="adminhelp_commands")],
+            [InlineKeyboardButton("Filters", callback_data="adminhelp_filters")],
+            [InlineKeyboardButton("Settings", callback_data="adminhelp_settings")],
+            [InlineKeyboardButton("Formatting", callback_data="adminhelp_formatting")]
+        ]
+        await query.edit_message_text("Admin Help Menu: Choose a section", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.answer()
+    except Exception as e:
+        logger.error(f"Error in adminhelp back: {e}")
+        await query.answer("An error occurred. Check logs.", show_alert=True)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -892,16 +988,8 @@ application.add_handler(CommandHandler("adminhelp", adminhelp))
 application.add_handler(CallbackQueryHandler(adminhelp_callback, pattern=r"^adminhelp_.*$"))
 application.add_handler(CallbackQueryHandler(adminhelp_back, pattern=r"^adminhelp_back$"))
 
-@app.post("/telegram")
-async def telegram_webhook(request: Request):
-    data = await request.json()
-    logger.info(f"Received update: {json.dumps(data, indent=2)}")
-    update = Update.de_json(data, application.bot)
-    await application.process_update(update)
-    return {"status": "ok"}
-
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     ensure_file_exists(FILTERS_FILE, {})
     ensure_file_exists(CLEANSERVICE_FILE, {})
     ensure_file_exists(WELCOME_FILE, {})
@@ -913,10 +1001,27 @@ async def startup():
     load_captcha()
     load_blacklist()
     logger.info(f"Starting application with webhook: {WEBHOOK_URL}")
+    logger.info(f"Final state - filters: {filters_dict}, cleanservice: {cleanservice_state}, welcome: {welcome_dict}, captcha: {captcha_state}, blacklist: {blacklist_dict}")
     await application.initialize()
     await application.start()
-    await application.bot.set_webhook(WEBHOOK_URL)
-    logger.info("Webhook set successfully")
+    current_webhook = await application.bot.get_webhook_info()
+    if current_webhook.url != WEBHOOK_URL:
+        await application.bot.set_webhook(WEBHOOK_URL)
+        logger.info(f"Webhook set to {WEBHOOK_URL}")
+    else:
+        logger.info(f"Webhook already set to {WEBHOOK_URL}")
+    yield
+    await application.stop()
+
+app.router.lifespan = lifespan
+
+@app.post("/telegram")
+async def telegram_webhook(request: Request):
+    data = await request.json()
+    logger.info(f"Received update: {json.dumps(data, indent=2)}")
+    update = Update.de_json(data, application.bot)
+    await application.process_update(update)
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=10000)
