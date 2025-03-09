@@ -110,7 +110,7 @@ def save_welcome_state():
         logger.error(f"Error saving welcome state: {e}")
 
 def escape_markdown_v2(text):
-    reserved_chars = r"[-()~`>#+|=|{}.!]"
+    reserved_chars = r"[-()~`>#+=|{}!.]"
     patterns = [r'(\[.*?\]\(.*?\))', r'(\*\*[^\*]*\*\*)', r'(__[^_]*__)']
     combined_pattern = '|'.join(patterns) + f'|({reserved_chars})'
     def replace_func(match):
@@ -148,6 +148,9 @@ def apply_entities_to_caption(caption, entities):
             new_text = f"[{entity_text}]({entity.url})"
         else:
             new_text = entity_text
+        if end < len(result) and result[end] in '!.':  # Handle trailing punctuation
+            new_text += result[end]
+            end += 1
         del result[start:end]
         result[start:start] = list(new_text)
         offset_shift += len(new_text) - entity.length
@@ -201,8 +204,10 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 try:
                     await context.bot.delete_message(chat_id, msg_id)
                     welcome_state[chat_id]["message_ids"].remove(msg_id)
+                    logger.info(f"Successfully deleted old welcome message {msg_id}")
                 except Exception as e:
                     logger.error(f"Failed to delete welcome message {msg_id}: {e}")
+            welcome_state[chat_id]["message_ids"] = []  # Clear list after attempts
             save_welcome_state()
 
         if chat_id not in captcha_enabled:
@@ -275,17 +280,22 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                 ws = welcome_state[chat_id]
                 text = ws["text"].replace("{username}", username)
-                text = escape_markdown_v2(text)
-                if ws["type"] == "text":
-                    msg = await context.bot.send_message(chat_id, text, parse_mode='MarkdownV2')
-                elif ws["type"] == "photo":
-                    msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode='MarkdownV2')
-                elif ws["type"] == "video":
-                    msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode='MarkdownV2')
-                elif ws["type"] == "animation":
-                    msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode='MarkdownV2')
-                welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
-                save_welcome_state()
+                try:
+                    text_with_entities = apply_entities_to_caption(text, [])
+                    escaped_text = escape_markdown_v2(text_with_entities)
+                    if ws["type"] == "text":
+                        msg = await context.bot.send_message(chat_id, escaped_text, parse_mode='MarkdownV2')
+                    elif ws["type"] == "photo":
+                        msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                    elif ws["type"] == "video":
+                        msg = await context.bot.send_video(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                    elif ws["type"] == "animation":
+                        msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                    welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
+                    save_welcome_state()
+                except Exception as e:
+                    logger.error(f"Failed to send welcome with Markdown: {e}")
+                    await context.bot.send_message(chat_id, text, parse_mode=None)  # Fallback to plain text
             else:
                 msg = await context.bot.send_message(chat_id, "✅ Verified!")
                 context.job_queue.run_once(lambda x: delete_message(x, chat_id, msg.message_id), 10, context=context)
@@ -435,7 +445,6 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
     if chat_id not in welcome_state:
         welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "message_ids": []}
 
-    # Handle text command
     args = update.message.text.split(maxsplit=1)
     if len(args) < 2:
         await update.message.reply_text("Usage: /setsolexawelcome <message> or ON|OFF|status|preview")
