@@ -94,6 +94,10 @@ def load_welcome_state():
             with open(WELCOME_STATE_FILE, 'r') as f:
                 data = json.load(f)
                 welcome_state = {int(chat_id): v for chat_id, v in data.items()}
+                # Convert entities back to MessageEntity objects if stored as dicts
+                for chat_id, state in welcome_state.items():
+                    if "entities" in state and isinstance(state["entities"], list):
+                        welcome_state[chat_id]["entities"] = [MessageEntity(**entity) for entity in state["entities"]]
         else:
             welcome_state = {}
         logger.info(f"Welcome state loaded: {repr(welcome_state)}")
@@ -103,8 +107,14 @@ def load_welcome_state():
 
 def save_welcome_state():
     try:
+        # Convert MessageEntity objects to dicts for JSON serialization
+        serialized_state = {}
+        for chat_id, state in welcome_state.items():
+            serialized_state[str(chat_id)] = state.copy()
+            if "entities" in serialized_state[str(chat_id)] and serialized_state[str(chat_id)]["entities"]:
+                serialized_state[str(chat_id)]["entities"] = [entity.to_dict() for entity in state["entities"]]
         with open(WELCOME_STATE_FILE, 'w') as f:
-            json.dump({str(k): v for k, v in welcome_state.items()}, f)
+            json.dump(serialized_state, f)
         logger.info(f"Welcome state saved: {repr(welcome_state)}")
     except Exception as e:
         logger.error(f"Error saving welcome state: {e}")
@@ -302,14 +312,16 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = ws["text"].replace("{username}", username)
                 escaped_text = escape_markdown_v2(text)
                 try:
+                    # Reapply entities to ensure correct formatting
+                    formatted_text = apply_entities_to_caption(text, ws["entities"])
                     if ws["type"] == "text":
-                        msg = await context.bot.send_message(chat_id, escaped_text, parse_mode='MarkdownV2')
+                        msg = await context.bot.send_message(chat_id, formatted_text, parse_mode='MarkdownV2')
                     elif ws["type"] == "photo":
-                        msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                        msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
                     elif ws["type"] == "video":
-                        msg = await context.bot.send_video(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                        msg = await context.bot.send_video(chat_id, ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
                     elif ws["type"] == "animation":
-                        msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                        msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
                     welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
                     save_welcome_state()
                 except Exception as e:
@@ -472,7 +484,7 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
         return
     chat_id = update.message.chat_id
     if chat_id not in welcome_state:
-        welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "message_ids": []}
+        welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "entities": [], "message_ids": []}
 
     args = update.message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -521,7 +533,7 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
                     await update.message.reply_animation(ws["file_id"], caption=text, parse_mode=None)
     else:
         text = args[1]
-        welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text})
+        welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text, "entities": []})
         save_welcome_state()
         await update.message.reply_text("Welcome text set ✅")
 
@@ -536,24 +548,23 @@ async def setsolexawelcome_media(update: Update, context: ContextTypes.DEFAULT_T
         return
     chat_id = update.message.chat_id
     if chat_id not in welcome_state:
-        welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "message_ids": []}
+        welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "entities": [], "message_ids": []}
 
     args = update.message.caption.split(maxsplit=1)
-    text = args[1] if len(args) > 1 else ""
+    raw_caption = args[1] if len(args) > 1 else ""
     entities = update.message.caption_entities or []
     command_length = len("/setsolexawelcome") + 1
     adjusted_entities = [MessageEntity(type=e.type, offset=e.offset - command_length, length=e.length, url=e.url)
                          for e in entities if e.offset >= command_length]
-    text = apply_entities_to_caption(text, adjusted_entities)
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
-        welcome_state[chat_id].update({"enabled": True, "type": "photo", "file_id": file_id, "text": text})
+        welcome_state[chat_id].update({"enabled": True, "type": "photo", "file_id": file_id, "text": raw_caption, "entities": adjusted_entities})
     elif update.message.video:
         file_id = update.message.video.file_id
-        welcome_state[chat_id].update({"enabled": True, "type": "video", "file_id": file_id, "text": text})
+        welcome_state[chat_id].update({"enabled": True, "type": "video", "file_id": file_id, "text": raw_caption, "entities": adjusted_entities})
     elif update.message.animation:
         file_id = update.message.animation.file_id
-        welcome_state[chat_id].update({"enabled": True, "type": "animation", "file_id": file_id, "text": text})
+        welcome_state[chat_id].update({"enabled": True, "type": "animation", "file_id": file_id, "text": raw_caption, "entities": adjusted_entities})
     else:
         await update.message.reply_text("Unsupported media type")
         return
