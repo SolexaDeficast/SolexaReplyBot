@@ -119,11 +119,12 @@ def save_welcome_state():
 
 def escape_markdown_v2(text):
     """
-    Escape special characters for Telegram MarkdownV2.
-    Special characters to escape: _ * [ ] ( ) ~ ` > # + - = | { } . ! \ 
+    Escape special characters for Telegram MarkdownV2, preserving * and _ for bold/italic.
+    Special characters to escape: ` > # + - = | { } . ! \ , except * and _
     """
-    special_chars = r'([_*[\]()~`>#+-=|{}\.!\\])'
+    special_chars = r'([`>#+\-=|{}\.!\\,])'  # Exclude * and _ from escaping
     escaped_text = re.sub(special_chars, r'\\\1', text)
+    logger.info(f"Raw MarkdownV2 text: {repr(text)}")
     logger.info(f"Escaped MarkdownV2 text: {repr(escaped_text)}")
     return escaped_text
 
@@ -196,6 +197,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     text = ws["text"].replace("{username}", username)
                     escaped_text = escape_markdown_v2(text)
                     try:
+                        logger.info(f"Sending welcome with MarkdownV2: {repr(escaped_text)}")
                         if ws["type"] == "text":
                             msg = await context.bot.send_message(chat_id, escaped_text, parse_mode='MarkdownV2')
                         elif ws["type"] == "photo":
@@ -206,8 +208,10 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                             msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
                         welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
                         save_welcome_state()
+                        logger.info(f"Welcome message sent successfully, message_id: {msg.message_id}")
                     except Exception as e:
-                        logger.error(f"Failed to send welcome with Markdown: {e}")
+                        logger.error(f"Failed to send welcome with MarkdownV2: {e}")
+                        logger.info(f"Falling back to plain text: {text}")
                         if ws["type"] == "text":
                             msg = await context.bot.send_message(chat_id, text, parse_mode=None)
                         elif ws["type"] == "photo":
@@ -218,6 +222,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                             msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
                         welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
                         save_welcome_state()
+                        logger.info(f"Fallback welcome message sent, message_id: {msg.message_id}")
     except Exception as e:
         logger.error(f"Error handling new member: {e}")
 
@@ -254,6 +259,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = ws["text"].replace("{username}", username)
                 escaped_text = escape_markdown_v2(text)
                 try:
+                    logger.info(f"Sending welcome with MarkdownV2: {repr(escaped_text)}")
                     if ws["type"] == "text":
                         msg = await context.bot.send_message(chat_id, escaped_text, parse_mode='MarkdownV2')
                     elif ws["type"] == "photo":
@@ -264,8 +270,10 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
                     welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
                     save_welcome_state()
+                    logger.info(f"Welcome message sent successfully, message_id: {msg.message_id}")
                 except Exception as e:
-                    logger.error(f"Failed to send welcome with Markdown: {e}")
+                    logger.error(f"Failed to send welcome with MarkdownV2: {e}")
+                    logger.info(f"Falling back to plain text: {text}")
                     if ws["type"] == "text":
                         msg = await context.bot.send_message(chat_id, text, parse_mode=None)
                     elif ws["type"] == "photo":
@@ -276,6 +284,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
                     welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
                     save_welcome_state()
+                    logger.info(f"Fallback welcome message sent, message_id: {msg.message_id}")
 
                 # Clear old welcome messages
                 if "message_ids" in welcome_state[chat_id]:
@@ -466,24 +475,28 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
             text = ws["text"].replace("{username}", update.message.from_user.username or update.message.from_user.first_name)
             escaped_text = escape_markdown_v2(text)
             try:
+                logger.info(f"Sending preview with MarkdownV2: {repr(escaped_text)}")
                 if ws["type"] == "text":
-                    await update.message.reply_text(escaped_text, parse_mode='MarkdownV2')
+                    msg = await context.bot.send_message(chat_id, escaped_text, parse_mode='MarkdownV2')
                 elif ws["type"] == "photo":
-                    await update.message.reply_photo(ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                    msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
                 elif ws["type"] == "video":
-                    await update.message.reply_video(ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                    msg = await context.bot.send_video(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
                 elif ws["type"] == "animation":
-                    await context.bot.send_animation(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                    msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                logger.info(f"Preview sent successfully, message_id: {msg.message_id}")
             except Exception as e:
-                logger.error(f"Failed to send preview with Markdown: {e}")
+                logger.error(f"Failed to send preview with MarkdownV2: {e}")
+                logger.info(f"Falling back to plain text: {text}")
                 if ws["type"] == "text":
-                    await update.message.reply_text(text, parse_mode=None)
+                    msg = await context.bot.send_message(chat_id, text, parse_mode=None)
                 elif ws["type"] == "photo":
-                    await update.message.reply_photo(ws["file_id"], caption=text, parse_mode=None)
+                    msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode=None)
                 elif ws["type"] == "video":
-                    await update.message.reply_video(ws["file_id"], caption=text, parse_mode=None)
+                    msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
                 elif ws["type"] == "animation":
-                    await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                    msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                logger.info(f"Fallback preview sent, message_id: {msg.message_id}")
     else:
         text = args[1]
         welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text, "entities": [], "message_ids": []})
