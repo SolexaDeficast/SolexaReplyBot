@@ -24,7 +24,6 @@ TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"
 
 captcha_attempts = {}
-app = FastAPI()
 application = Application.builder().token(TOKEN).build()
 
 # Dictionaries for state management
@@ -1004,9 +1003,13 @@ application.add_handler(CommandHandler("adminhelp", adminhelp))
 application.add_handler(CallbackQueryHandler(adminhelp_callback, pattern=r"^adminhelp_.*$"))
 application.add_handler(CallbackQueryHandler(adminhelp_back, pattern=r"^adminhelp_back$"))
 
+# Track whether the application has been initialized
+app_initialized = False
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize and start the Telegram application
+    global app_initialized
+    logger.info("Lifespan startup: Initializing application...")
     ensure_file_exists(FILTERS_FILE, {})
     ensure_file_exists(CLEANSERVICE_FILE, {})
     ensure_file_exists(WELCOME_FILE, {})
@@ -1019,19 +1022,54 @@ async def lifespan(app: FastAPI):
     load_blacklist()
     logger.info(f"Starting application with webhook: {WEBHOOK_URL}")
     logger.info(f"Final state - filters: {filters_dict}, cleanservice: {cleanservice_state}, welcome: {welcome_dict}, captcha: {captcha_state}, blacklist: {blacklist_dict}")
-    await application.initialize()  # Explicitly initialize the application
-    await application.start()       # Start the application
-    await application.updater.start_webhook(
-        listen="0.0.0.0",
-        port=10000,
-        url_path="telegram",
-        webhook_url=WEBHOOK_URL
-    )
+    try:
+        await application.initialize()
+        logger.info("Application initialized successfully")
+        await application.start()
+        logger.info("Application started successfully")
+        await application.updater.start_webhook(
+            listen="0.0.0.0",
+            port=10000,
+            url_path="telegram",
+            webhook_url=WEBHOOK_URL
+        )
+        logger.info("Webhook started successfully")
+        app_initialized = True
+    except Exception as e:
+        logger.error(f"Failed to initialize application: {e}")
+        raise
     yield
-    await application.stop()
+    logger.info("Lifespan shutdown: Stopping application...")
+    try:
+        await application.updater.stop()
+        logger.info("Webhook stopped successfully")
+        await application.stop()
+        logger.info("Application stopped successfully")
+    except Exception as e:
+        logger.error(f"Failed to stop application: {e}")
+
+# Explicitly attach the lifespan to the FastAPI app
+app = FastAPI(lifespan=lifespan)
 
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
+    global app_initialized
+    if not app_initialized:
+        logger.warning("Application not initialized, attempting manual initialization...")
+        try:
+            await application.initialize()
+            await application.start()
+            await application.updater.start_webhook(
+                listen="0.0.0.0",
+                port=10000,
+                url_path="telegram",
+                webhook_url=WEBHOOK_URL
+            )
+            app_initialized = True
+            logger.info("Manual initialization successful")
+        except Exception as e:
+            logger.error(f"Manual initialization failed: {e}")
+            raise RuntimeError("Failed to initialize application manually")
     data = await request.json()
     logger.info(f"Received update: {json.dumps(data, indent=2)}")
     update = Update.de_json(data, application.bot)
