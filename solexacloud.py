@@ -143,14 +143,17 @@ def apply_entities_to_caption(caption, entities):
         if entity.type == "bold":
             new_text = f"*{entity_text}*"
         elif entity.type == "italic":
-            new_text = f"_{entity_text}_"
+            # Ensure punctuation is outside italic markup
+            if end < len(result) and result[end] in '!.':
+                entity_text = entity_text.rstrip('!.')
+                new_text = f"_{entity_text}_" + result[end]
+                end += 1
+            else:
+                new_text = f"_{entity_text}_"
         elif entity.type == "url" and entity.url:
             new_text = f"[{entity_text}]({entity.url})"
         else:
             new_text = entity_text
-        if end < len(result) and result[end] in '!.':  # Handle trailing punctuation
-            new_text = new_text[:-1] + result[end] + new_text[-1]  # Move punctuation outside markup
-            end += 1
         del result[start:end]
         result[start:start] = list(new_text)
         offset_shift += len(new_text) - entity.length
