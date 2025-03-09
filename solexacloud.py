@@ -121,14 +121,17 @@ def save_welcome_state():
 
 def escape_markdown_v2(text):
     reserved_chars = r"[-()~`>#+=|{}!.]"
+    # Escape all reserved characters globally first
+    for char in reserved_chars:
+        text = text.replace(char, f"\\{char}")
+    # Ensure Markdown patterns are preserved
     patterns = [r'(\[.*?\]\(.*?\))', r'(\*\*[^\*]*\*\*)', r'(__[^_]*__)']
-    combined_pattern = '|'.join(patterns) + f'|({reserved_chars})'
+    combined_pattern = '|'.join(patterns)
     def replace_func(match):
         for i in range(1, 4):
             if match.group(i):
-                return match.group(i)
-        char = match.group(4)
-        return '\\' + char
+                return match.group(i)  # Preserve Markdown patterns
+        return match.group(0)  # Shouldn't reach here due to global escape
     escaped_text = re.sub(combined_pattern, replace_func, text)
     logger.info(f"Escaped text: {repr(escaped_text)}")
     return escaped_text
@@ -310,7 +313,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                 ws = welcome_state[chat_id]
                 text = ws["text"].replace("{username}", username)
-                escaped_text = escape_markdown_v2(text)
                 try:
                     # Reapply entities to ensure correct formatting
                     formatted_text = apply_entities_to_caption(text, ws["entities"])
