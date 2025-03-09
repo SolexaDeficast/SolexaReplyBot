@@ -96,16 +96,32 @@ def load_filters():
     logger.info(f"Filters loaded: {repr(filters_dict)}")
 def save_filters(): save_state(FILTERS_FILE, filters_dict)
 def load_cleanservice(): 
-    load_state(CLEANSERVICE_FILE, cleanservice_state, lambda: {-1002280396764: {'enabled': False, 'delay': 15} if not filters_dict else {chat_id: {'enabled': False, 'delay': 15} for chat_id in filters_dict.keys()}))
+    load_state(
+        CLEANSERVICE_FILE,
+        cleanservice_state,
+        lambda: {-1002280396764: {'enabled': False, 'delay': 15}} if not filters_dict else {chat_id: {'enabled': False, 'delay': 15} for chat_id in filters_dict.keys()}
+    )
 def save_cleanservice(): save_state(CLEANSERVICE_FILE, cleanservice_state)
 def load_welcome(): 
-    load_state(WELCOME_FILE, welcome_dict, lambda: {-1002280396764: {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''} if not filters_dict else {chat_id: {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''} for chat_id in filters_dict.keys()}))
+    load_state(
+        WELCOME_FILE,
+        welcome_dict,
+        lambda: {-1002280396764: {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''}} if not filters_dict else {chat_id: {'enabled': False, 'type': 'text', 'file_id': None, 'text': ''} for chat_id in filters_dict.keys()}
+    )
 def save_welcome(): save_state(WELCOME_FILE, welcome_dict)
 def load_captcha(): 
-    load_state(CAPTCHA_FILE, captcha_state, lambda: {-1002280396764: True if not filters_dict else {chat_id: True for chat_id in filters_dict.keys()}))
+    load_state(
+        CAPTCHA_FILE,
+        captcha_state,
+        lambda: {-1002280396764: True} if not filters_dict else {chat_id: True for chat_id in filters_dict.keys()}
+    )
 def save_captcha(): save_state(CAPTCHA_FILE, captcha_state)
 def load_blacklist(): 
-    load_state(BLACKLIST_FILE, blacklist_dict, lambda: {-1002280396764: {'terms': set(), 'users': {}} if not filters_dict else {chat_id: {'terms': set(), 'users': {}} for chat_id in filters_dict.keys()}))
+    load_state(
+        BLACKLIST_FILE,
+        blacklist_dict,
+        lambda: {-1002280396764: {'terms': set(), 'users': {}}} if not filters_dict else {chat_id: {'terms': set(), 'users': {}} for chat_id in filters_dict.keys()}
+    )
 def save_blacklist(): save_state(BLACKLIST_FILE, blacklist_dict)
 
 def escape_markdown_v2(text):
