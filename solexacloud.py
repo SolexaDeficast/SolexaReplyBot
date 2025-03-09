@@ -140,25 +140,27 @@ def apply_entities_to_caption(caption, entities):
             logger.warning(f"Entity out of bounds: {entity}, caption length: {len(result)}")
             continue
         entity_text = ''.join(result[start:end])
+        logger.info(f"Processing entity: {entity.type}, text: {entity_text}, start: {start}, end: {end}")
         if entity.type == "bold":
             new_text = f"*{entity_text}*"
         elif entity.type == "italic":
-            # Ensure punctuation is outside italic markup
+            # Trim trailing punctuation and append outside markup
+            punctuation = ''
             if end < len(result) and result[end] in '!.':
+                punctuation = result[end]
                 entity_text = entity_text.rstrip('!.')
-                new_text = f"_{entity_text}_" + result[end]
                 end += 1
-            else:
-                new_text = f"_{entity_text}_"
+            new_text = f"_{entity_text}_" + punctuation
         elif entity.type == "url" and entity.url:
             new_text = f"[{entity_text}]({entity.url})"
         else:
             new_text = entity_text
+        logger.info(f"New text after entity processing: {new_text}")
         del result[start:end]
         result[start:start] = list(new_text)
         offset_shift += len(new_text) - entity.length
     final_text = ''.join(result)
-    logger.info(f"Text after applying entities: {repr(final_text)}")
+    logger.info(f"Text after applying all entities: {repr(final_text)}")
     return final_text
 
 def generate_captcha():
