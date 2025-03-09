@@ -197,7 +197,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         chat_id = update.message.chat_id
         if chat_id in welcome_state and "message_ids" in welcome_state[chat_id]:
-            for msg_id in welcome_state[chat_id]["message_ids"][:]:  # Copy to avoid modifying during iteration
+            for msg_id in welcome_state[chat_id]["message_ids"][:]:
                 try:
                     await context.bot.delete_message(chat_id, msg_id)
                     welcome_state[chat_id]["message_ids"].remove(msg_id)
@@ -231,6 +231,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                     ws = welcome_state[chat_id]
                     text = ws["text"].replace("{username}", username)
+                    text = escape_markdown_v2(text)
                     if ws["type"] == "text":
                         msg = await context.bot.send_message(chat_id, text, parse_mode='MarkdownV2')
                     elif ws["type"] == "photo":
@@ -274,6 +275,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                 ws = welcome_state[chat_id]
                 text = ws["text"].replace("{username}", username)
+                text = escape_markdown_v2(text)
                 if ws["type"] == "text":
                     msg = await context.bot.send_message(chat_id, text, parse_mode='MarkdownV2')
                 elif ws["type"] == "photo":
@@ -433,74 +435,82 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
     if chat_id not in welcome_state:
         welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "message_ids": []}
 
-    # Handle media first
-    if update.message.photo or update.message.video or update.message.animation:
-        if not update.message.caption or not update.message.caption.startswith('/setsolexawelcome'):
-            await update.message.reply_text("Use '/setsolexawelcome [text]' as caption for media")
-            return
-        args = update.message.caption.split(maxsplit=1)
-        text = args[1] if len(args) > 1 else ""
-        entities = update.message.caption_entities or []
-        command_length = len("/setsolexawelcome") + 1
-        adjusted_entities = [MessageEntity(type=e.type, offset=e.offset - command_length, length=e.length, url=e.url)
-                             for e in entities if e.offset >= command_length]
-        text = apply_entities_to_caption(text, adjusted_entities)
-        text = escape_markdown_v2(text)
-        if update.message.photo:
-            file_id = update.message.photo[-1].file_id
-            welcome_state[chat_id].update({"enabled": True, "type": "photo", "file_id": file_id, "text": text})
-        elif update.message.video:
-            file_id = update.message.video.file_id
-            welcome_state[chat_id].update({"enabled": True, "type": "video", "file_id": file_id, "text": text})
-        elif update.message.animation:
-            file_id = update.message.animation.file_id
-            welcome_state[chat_id].update({"enabled": True, "type": "animation", "file_id": file_id, "text": text})
-        save_welcome_state()
-        await update.message.reply_text(f"{welcome_state[chat_id]['type'].capitalize()} welcome set ✅")
-        return
-
     # Handle text command
-    if update.message.text:
-        args = update.message.text.split(maxsplit=1)
-        if len(args) < 2:
-            await update.message.reply_text("Usage: /setsolexawelcome <message> or ON|OFF|status|preview")
-            return
-        subcommand = args[1].split()[0].upper() if len(args[1].split()) > 0 else args[1].upper()
-        if subcommand in ["ON", "OFF", "STATUS", "PREVIEW"]:
-            if subcommand == "ON":
-                welcome_state[chat_id]["enabled"] = True
-                save_welcome_state()
-                await update.message.reply_text("Welcome message enabled ✅")
-            elif subcommand == "OFF":
-                welcome_state[chat_id]["enabled"] = False
-                save_welcome_state()
-                await update.message.reply_text("Welcome message disabled ✅")
-            elif subcommand == "STATUS":
-                enabled = welcome_state[chat_id]["enabled"]
-                type_ = welcome_state[chat_id]["type"] or "not set"
-                text = welcome_state[chat_id]["text"] or "no text"
-                await update.message.reply_text(f"Welcome is {'enabled' if enabled else 'disabled'}, type: {type_}, text: {text}")
-            elif subcommand == "PREVIEW":
-                if not welcome_state[chat_id]["enabled"] or not welcome_state[chat_id]["type"]:
-                    await update.message.reply_text("No welcome message set")
-                    return
-                ws = welcome_state[chat_id]
-                text = ws["text"].replace("{username}", update.message.from_user.username or update.message.from_user.first_name)
-                if ws["type"] == "text":
-                    await update.message.reply_text(text, parse_mode='MarkdownV2')
-                elif ws["type"] in ["photo", "video", "animation"]:
-                    if ws["type"] == "photo":
-                        await update.message.reply_photo(ws["file_id"], caption=text, parse_mode='MarkdownV2')
-                    elif ws["type"] == "video":
-                        await update.message.reply_video(ws["file_id"], caption=text, parse_mode='MarkdownV2')
-                    elif ws["type"] == "animation":
-                        await update.message.reply_animation(ws["file_id"], caption=text, parse_mode='MarkdownV2')
-        else:
-            text = args[1]
-            text = escape_markdown_v2(text)
-            welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text})
+    args = update.message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /setsolexawelcome <message> or ON|OFF|status|preview")
+        return
+    subcommand = args[1].split()[0].upper() if len(args[1].split()) > 0 else args[1].upper()
+    if subcommand in ["ON", "OFF", "STATUS", "PREVIEW"]:
+        if subcommand == "ON":
+            welcome_state[chat_id]["enabled"] = True
             save_welcome_state()
-            await update.message.reply_text("Welcome text set ✅")
+            await update.message.reply_text("Welcome message enabled ✅")
+        elif subcommand == "OFF":
+            welcome_state[chat_id]["enabled"] = False
+            save_welcome_state()
+            await update.message.reply_text("Welcome message disabled ✅")
+        elif subcommand == "STATUS":
+            enabled = welcome_state[chat_id]["enabled"]
+            type_ = welcome_state[chat_id]["type"] or "not set"
+            text = welcome_state[chat_id]["text"] or "no text"
+            await update.message.reply_text(f"Welcome is {'enabled' if enabled else 'disabled'}, type: {type_}, text: {text}")
+        elif subcommand == "PREVIEW":
+            if not welcome_state[chat_id]["enabled"] or not welcome_state[chat_id]["type"]:
+                await update.message.reply_text("No welcome message set")
+                return
+            ws = welcome_state[chat_id]
+            text = ws["text"].replace("{username}", update.message.from_user.username or update.message.from_user.first_name)
+            text = escape_markdown_v2(text)
+            if ws["type"] == "text":
+                await update.message.reply_text(text, parse_mode='MarkdownV2')
+            elif ws["type"] in ["photo", "video", "animation"]:
+                if ws["type"] == "photo":
+                    await update.message.reply_photo(ws["file_id"], caption=text, parse_mode='MarkdownV2')
+                elif ws["type"] == "video":
+                    await update.message.reply_video(ws["file_id"], caption=text, parse_mode='MarkdownV2')
+                elif ws["type"] == "animation":
+                    await update.message.reply_animation(ws["file_id"], caption=text, parse_mode='MarkdownV2')
+    else:
+        text = args[1]
+        welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text})
+        save_welcome_state()
+        await update.message.reply_text("Welcome text set ✅")
+
+async def setsolexawelcome_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.caption or not update.message.caption.startswith('/setsolexawelcome'):
+        return
+    if update.message.chat.type == "private":
+        await update.message.reply_text("Group-only command ❌")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await update.message.reply_text("No permission ❌")
+        return
+    chat_id = update.message.chat_id
+    if chat_id not in welcome_state:
+        welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "message_ids": []}
+
+    args = update.message.caption.split(maxsplit=1)
+    text = args[1] if len(args) > 1 else ""
+    entities = update.message.caption_entities or []
+    command_length = len("/setsolexawelcome") + 1
+    adjusted_entities = [MessageEntity(type=e.type, offset=e.offset - command_length, length=e.length, url=e.url)
+                         for e in entities if e.offset >= command_length]
+    text = apply_entities_to_caption(text, adjusted_entities)
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+        welcome_state[chat_id].update({"enabled": True, "type": "photo", "file_id": file_id, "text": text})
+    elif update.message.video:
+        file_id = update.message.video.file_id
+        welcome_state[chat_id].update({"enabled": True, "type": "video", "file_id": file_id, "text": text})
+    elif update.message.animation:
+        file_id = update.message.animation.file_id
+        welcome_state[chat_id].update({"enabled": True, "type": "animation", "file_id": file_id, "text": text})
+    else:
+        await update.message.reply_text("Unsupported media type")
+        return
+    save_welcome_state()
+    await update.message.reply_text(f"{welcome_state[chat_id]['type'].capitalize()} welcome set ✅")
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
@@ -605,7 +615,7 @@ async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.caption or not update.message.caption.startswith('/addsolexafilter'):
-        return  # Skip if not an addsolexafilter command
+        return
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
         chat_id = update.message.chat_id
         caption = update.message.caption
@@ -689,6 +699,7 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("setsolexawelcome", setsolexawelcome_command))
+application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, setsolexawelcome_media))
 application.add_handler(CommandHandler("ban", ban_user))
 application.add_handler(CommandHandler("kick", kick_user))
 application.add_handler(CommandHandler("mute10", mute10))
