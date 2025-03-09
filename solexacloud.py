@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"
 
-captcha_attempts = {}
 application = Application.builder().token(TOKEN).build()
 
 # Dictionaries for state management
@@ -1027,13 +1026,9 @@ async def lifespan(app: FastAPI):
         logger.info("Application initialized successfully")
         await application.start()
         logger.info("Application started successfully")
-        await application.updater.start_webhook(
-            listen="0.0.0.0",
-            port=10000,
-            url_path="telegram",
-            webhook_url=WEBHOOK_URL
-        )
-        logger.info("Webhook started successfully")
+        # Set the webhook URL via the Telegram API (no local server binding)
+        await application.bot.set_webhook(url=WEBHOOK_URL)
+        logger.info("Webhook URL set successfully")
         app_initialized = True
     except Exception as e:
         logger.error(f"Failed to initialize application: {e}")
@@ -1041,8 +1036,6 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Lifespan shutdown: Stopping application...")
     try:
-        await application.updater.stop()
-        logger.info("Webhook stopped successfully")
         await application.stop()
         logger.info("Application stopped successfully")
     except Exception as e:
@@ -1059,12 +1052,7 @@ async def telegram_webhook(request: Request):
         try:
             await application.initialize()
             await application.start()
-            await application.updater.start_webhook(
-                listen="0.0.0.0",
-                port=10000,
-                url_path="telegram",
-                webhook_url=WEBHOOK_URL
-            )
+            await application.bot.set_webhook(url=WEBHOOK_URL)
             app_initialized = True
             logger.info("Manual initialization successful")
         except Exception as e:
