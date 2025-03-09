@@ -117,77 +117,20 @@ def save_welcome_state():
     except Exception as e:
         logger.error(f"Error saving welcome state: {e}")
 
-def escape_markdown_v2(text):
-    reserved_chars = r"[-()~`>#+=|{}!.,]"
-    for char in reserved_chars:
-        text = text.replace(char, f"\\{char}")
-    patterns = [r'(\[.*?\]\(.*?\))', r'(\*[^\*]*\*)', r'(_[^_]*_)']
-    combined_pattern = '|'.join(patterns)
-    def replace_func(match):
-        for i in range(1, 4):
-            if match.group(i):
-                return match.group(i)
-        return match.group(0)
-    escaped_text = re.sub(combined_pattern, replace_func, text)
-    logger.info(f"Escaped text: {repr(escaped_text)}")
-    return escaped_text
-
-def parse_markdown_entities(text, command_length):
-    entities = []
-    text_to_parse = text[command_length:]
-    offset_adjust = command_length
-
-    bold_pattern = r'\*(.*?)\*'
-    for match in re.finditer(bold_pattern, text_to_parse):
-        start = match.start() + offset_adjust
-        length = len(match.group(1))
-        offset = start + 1
-        entities.append(MessageEntity(type="bold", offset=offset, length=length))
-
-    italic_pattern = r'_(.*?)_'
-    for match in re.finditer(italic_pattern, text_to_parse):
-        start = match.start() + offset_adjust
-        length = len(match.group(1))
-        offset = start + 1
-        entities.append(MessageEntity(type="italic", offset=offset, length=length))
-
-    entities.sort(key=lambda e: e.offset)
-    logger.info(f"Parsed entities: {[entity.to_dict() for entity in entities]}")
-    return entities
-
-def apply_entities_to_caption(caption, entities):
-    if not entities or not caption:
-        return escape_markdown_v2(caption)
-
-    result = list(caption)
-    offset_shift = 0
-    for entity in sorted(entities, key=lambda e: e.offset):
-        start = entity.offset + offset_shift
-        end = start + entity.length
-        if start >= len(result) or end > len(result):
-            logger.warning(f"Entity out of bounds: {entity}, caption length: {len(result)}")
-            continue
-        entity_text = ''.join(result[start:end])
-        reserved_chars = r"[-()~`>#+=|{}!.,]"
-        escaped_entity_text = entity_text
-        for char in reserved_chars:
-            escaped_entity_text = escaped_entity_text.replace(char, f"\\{char}")
-        logger.info(f"Processing entity: {entity.type}, text: {entity_text}, escaped: {escaped_entity_text}, start: {start}, end: {end}")
-        if entity.type == "bold":
-            new_text = f"*{escaped_entity_text}*"
-        elif entity.type == "italic":
-            new_text = f"_{escaped_entity_text}_"
-        elif entity.type == "url" and entity.url:
-            new_text = f"[{escaped_entity_text}]({entity.url})"
-        else:
-            new_text = escaped_entity_text
-        logger.info(f"New text after entity processing: {new_text}")
-        del result[start:end]
-        result[start:start] = list(new_text)
-        offset_shift += len(new_text) - entity.length
-    final_text = ''.join(result)
-    logger.info(f"Text after applying all entities: {repr(final_text)}")
-    return final_text
+def escape_html(text):
+    # Convert Markdown to HTML and escape HTML-sensitive characters
+    text = text.replace('*', '<b>').replace('*/', '</b>').replace('_', '<i>').replace('_/', '</i>')
+    html_special_chars = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }
+    for char, entity in html_special_chars.items():
+        text = text.replace(char, entity)
+    logger.info(f"Escaped HTML text: {repr(text)}")
+    return text
 
 def generate_captcha():
     num1 = random.randint(1, 10)
@@ -256,22 +199,20 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                     ws = welcome_state[chat_id]
                     text = ws["text"].replace("{username}", username)
-                    # Use escaped Markdown directly, bypassing entities
-                    formatted_text = escape_markdown_v2(text)
+                    formatted_text = escape_html(text)
                     try:
                         if ws["type"] == "text":
-                            msg = await context.bot.send_message(chat_id, formatted_text, parse_mode='MarkdownV2')
+                            msg = await context.bot.send_message(chat_id, formatted_text, parse_mode='HTML')
                         elif ws["type"] == "photo":
-                            msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
+                            msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=formatted_text, parse_mode='HTML')
                         elif ws["type"] == "video":
-                            msg = await context.bot.send_video(chat_id, ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
+                            msg = await context.bot.send_video(chat_id, ws["file_id"], caption=formatted_text, parse_mode='HTML')
                         elif ws["type"] == "animation":
-                            msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
+                            msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=formatted_text, parse_mode='HTML')
                         welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
                         save_welcome_state()
                     except Exception as e:
-                        logger.error(f"Failed to send welcome with Markdown: {e}")
-                        # Fallback to plain text
+                        logger.error(f"Failed to send welcome with HTML: {e}")
                         if ws["type"] == "text":
                             msg = await context.bot.send_message(chat_id, text, parse_mode=None)
                         elif ws["type"] == "photo":
@@ -316,20 +257,20 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                 ws = welcome_state[chat_id]
                 text = ws["text"].replace("{username}", username)
-                formatted_text = escape_markdown_v2(text)
+                formatted_text = escape_html(text)
                 try:
                     if ws["type"] == "text":
-                        msg = await context.bot.send_message(chat_id, formatted_text, parse_mode='MarkdownV2')
+                        msg = await context.bot.send_message(chat_id, formatted_text, parse_mode='HTML')
                     elif ws["type"] == "photo":
-                        msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
+                        msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=formatted_text, parse_mode='HTML')
                     elif ws["type"] == "video":
-                        msg = await context.bot.send_video(chat_id, ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
+                        msg = await context.bot.send_video(chat_id, ws["file_id"], caption=formatted_text, parse_mode='HTML')
                     elif ws["type"] == "animation":
-                        msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
+                        msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=formatted_text, parse_mode='HTML')
                     welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
                     save_welcome_state()
                 except Exception as e:
-                    logger.error(f"Failed to send welcome with Markdown: {e}")
+                    logger.error(f"Failed to send welcome with HTML: {e}")
                     if ws["type"] == "text":
                         msg = await context.bot.send_message(chat_id, text, parse_mode=None)
                     elif ws["type"] == "photo":
@@ -387,19 +328,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         media_type = response['type']
                         file_id = response['file_id']
                         text = response.get('text', '')
-                        escaped_text = escape_markdown_v2(text)
+                        formatted_text = escape_html(text)
                         if media_type == 'photo':
-                            await update.message.reply_photo(photo=file_id, caption=escaped_text, parse_mode='MarkdownV2')
+                            await update.message.reply_photo(photo=file_id, caption=formatted_text, parse_mode='HTML')
                         elif media_type == 'video':
-                            await update.message.reply_video(video=file_id, caption=escaped_text, parse_mode='MarkdownV2', supports_streaming=True)
+                            await update.message.reply_video(video=file_id, caption=formatted_text, parse_mode='HTML', supports_streaming=True)
                         elif media_type == 'audio':
-                            await update.message.reply_audio(audio=file_id, caption=escaped_text, parse_mode='MarkdownV2')
+                            await update.message.reply_audio(audio=file_id, caption=formatted_text, parse_mode='HTML')
                         elif media_type == 'animation':
-                            await update.message.reply_animation(animation=file_id, caption=escaped_text, parse_mode='MarkdownV2')
+                            await update.message.reply_animation(animation=file_id, caption=formatted_text, parse_mode='HTML')
                         elif media_type == 'voice':
-                            await update.message.reply_voice(voice=file_id, caption=escaped_text, parse_mode='MarkdownV2')
+                            await update.message.reply_voice(voice=file_id, caption=formatted_text, parse_mode='HTML')
                     elif isinstance(response, str):
-                        await update.message.reply_text(response, parse_mode='MarkdownV2')
+                        await update.message.reply_text(response, parse_mode='HTML')
                     return
         for keyword, media_file in keyword_responses.items():
             if message_text == keyword:
@@ -432,19 +373,19 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
                         media_type = response['type']
                         file_id = response['file_id']
                         text = response.get('text', '')
-                        escaped_text = escape_markdown_v2(text)
+                        formatted_text = escape_html(text)
                         if media_type == 'photo':
-                            await update.message.reply_photo(photo=file_id, caption=escaped_text, parse_mode='MarkdownV2')
+                            await update.message.reply_photo(photo=file_id, caption=formatted_text, parse_mode='HTML')
                         elif media_type == 'video':
-                            await update.message.reply_video(video=file_id, caption=escaped_text, parse_mode='MarkdownV2', supports_streaming=True)
+                            await update.message.reply_video(video=file_id, caption=formatted_text, parse_mode='HTML', supports_streaming=True)
                         elif media_type == 'audio':
-                            await update.message.reply_audio(audio=file_id, caption=escaped_text, parse_mode='MarkdownV2')
+                            await update.message.reply_audio(audio=file_id, caption=formatted_text, parse_mode='HTML')
                         elif media_type == 'animation':
-                            await update.message.reply_animation(animation=file_id, caption=escaped_text, parse_mode='MarkdownV2')
+                            await update.message.reply_animation(animation=file_id, caption=formatted_text, parse_mode='HTML')
                         elif media_type == 'voice':
-                            await update.message.reply_voice(voice=file_id, caption=escaped_text, parse_mode='MarkdownV2')
+                            await update.message.reply_voice(voice=file_id, caption=formatted_text, parse_mode='HTML')
                     elif isinstance(response, str):
-                        await update.message.reply_text(response, parse_mode='MarkdownV2')
+                        await update.message.reply_text(response, parse_mode='HTML')
                     return
     except Exception as e:
         logger.error(f"Filter error: {e}")
@@ -457,10 +398,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Custom welcome message after verification (set with /setsolexawelcome <message> or media, use {username})\n"
         "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, /unban, etc\n"
         "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
-        "- Supports *bold*, _italics_, [hyperlinks](https://example.com), and links\n"
+        "- Supports <b>bold</b>, <i>italics</i>, <a href=\"https://example.com\">hyperlinks</a>, and links\n"
         "- Contact admin for help"
     )
-    await update.message.reply_text(help_text, parse_mode='MarkdownV2')
+    await update.message.reply_text(help_text, parse_mode='HTML')
 
 async def solexacaptcha_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == "private":
@@ -525,18 +466,18 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
                 return
             ws = welcome_state[chat_id]
             text = ws["text"].replace("{username}", update.message.from_user.username or update.message.from_user.first_name)
-            formatted_text = escape_markdown_v2(text)
+            formatted_text = escape_html(text)
             try:
                 if ws["type"] == "text":
-                    await update.message.reply_text(formatted_text, parse_mode='MarkdownV2')
+                    await update.message.reply_text(formatted_text, parse_mode='HTML')
                 elif ws["type"] == "photo":
-                    await update.message.reply_photo(ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
+                    await update.message.reply_photo(ws["file_id"], caption=formatted_text, parse_mode='HTML')
                 elif ws["type"] == "video":
-                    await update.message.reply_video(ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
+                    await update.message.reply_video(ws["file_id"], caption=formatted_text, parse_mode='HTML')
                 elif ws["type"] == "animation":
-                    await update.message.reply_animation(ws["file_id"], caption=formatted_text, parse_mode='MarkdownV2')
+                    await context.bot.send_animation(chat_id, ws["file_id"], caption=formatted_text, parse_mode='HTML')
             except Exception as e:
-                logger.error(f"Failed to send preview with Markdown: {e}")
+                logger.error(f"Failed to send preview with HTML: {e}")
                 if ws["type"] == "text":
                     await update.message.reply_text(text, parse_mode=None)
                 elif ws["type"] == "photo":
@@ -544,7 +485,7 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
                 elif ws["type"] == "video":
                     await update.message.reply_video(ws["file_id"], caption=text, parse_mode=None)
                 elif ws["type"] == "animation":
-                    await update.message.reply_animation(ws["file_id"], caption=text, parse_mode=None)
+                    await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
     else:
         text = args[1]
         welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text, "entities": [], "message_ids": []})
@@ -673,10 +614,10 @@ async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         keyword = context.args[0].lower()
         response_text = " ".join(context.args[1:])
-        response_text = escape_markdown_v2(response_text)
+        formatted_text = escape_html(response_text)
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
-        filters_dict[chat_id][keyword] = response_text
+        filters_dict[chat_id][keyword] = formatted_text
         save_filters()
         await update.message.reply_text(f"Text filter '{keyword}' added ✅")
     else:
@@ -694,28 +635,28 @@ async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         keyword = args[1].lower()
         raw_text = args[2] if len(args) > 2 else ""
-        escaped_text = escape_markdown_v2(raw_text)
+        formatted_text = escape_html(raw_text)
         if chat_id not in filters_dict:
             filters_dict[chat_id] = {}
         if update.message.photo:
             file_id = update.message.photo[-1].file_id
-            filters_dict[chat_id][keyword] = {'type': 'photo', 'file_id': file_id, 'text': escaped_text}
+            filters_dict[chat_id][keyword] = {'type': 'photo', 'file_id': file_id, 'text': formatted_text}
             await update.message.reply_text(f"Photo filter '{keyword}' added ✅")
         elif update.message.video:
             file_id = update.message.video.file_id
-            filters_dict[chat_id][keyword] = {'type': 'video', 'file_id': file_id, 'text': escaped_text}
+            filters_dict[chat_id][keyword] = {'type': 'video', 'file_id': file_id, 'text': formatted_text}
             await update.message.reply_text(f"Video filter '{keyword}' added ✅")
         elif update.message.audio:
             file_id = update.message.audio.file_id
-            filters_dict[chat_id][keyword] = {'type': 'audio', 'file_id': file_id, 'text': escaped_text}
+            filters_dict[chat_id][keyword] = {'type': 'audio', 'file_id': file_id, 'text': formatted_text}
             await update.message.reply_text(f"Audio filter '{keyword}' added ✅")
         elif update.message.animation:
             file_id = update.message.animation.file_id
-            filters_dict[chat_id][keyword] = {'type': 'animation', 'file_id': file_id, 'text': escaped_text}
+            filters_dict[chat_id][keyword] = {'type': 'animation', 'file_id': file_id, 'text': formatted_text}
             await update.message.reply_text(f"GIF filter '{keyword}' added ✅")
         elif update.message.voice:
             file_id = update.message.voice.file_id
-            filters_dict[chat_id][keyword] = {'type': 'voice', 'file_id': file_id, 'text': escaped_text}
+            filters_dict[chat_id][keyword] = {'type': 'voice', 'file_id': file_id, 'text': formatted_text}
             await update.message.reply_text(f"Voice filter '{keyword}' added ✅")
         else:
             await update.message.reply_text("No supported media type detected")
