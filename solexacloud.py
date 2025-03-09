@@ -1006,6 +1006,7 @@ application.add_handler(CallbackQueryHandler(adminhelp_back, pattern=r"^adminhel
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize and start the Telegram application
     ensure_file_exists(FILTERS_FILE, {})
     ensure_file_exists(CLEANSERVICE_FILE, {})
     ensure_file_exists(WELCOME_FILE, {})
@@ -1018,18 +1019,16 @@ async def lifespan(app: FastAPI):
     load_blacklist()
     logger.info(f"Starting application with webhook: {WEBHOOK_URL}")
     logger.info(f"Final state - filters: {filters_dict}, cleanservice: {cleanservice_state}, welcome: {welcome_dict}, captcha: {captcha_state}, blacklist: {blacklist_dict}")
-    await application.initialize()
-    await application.start()
-    current_webhook = await application.bot.get_webhook_info()
-    if current_webhook.url != WEBHOOK_URL:
-        await application.bot.set_webhook(WEBHOOK_URL)
-        logger.info(f"Webhook set to {WEBHOOK_URL}")
-    else:
-        logger.info(f"Webhook already set to {WEBHOOK_URL}")
+    await application.initialize()  # Explicitly initialize the application
+    await application.start()       # Start the application
+    await application.updater.start_webhook(
+        listen="0.0.0.0",
+        port=10000,
+        url_path="telegram",
+        webhook_url=WEBHOOK_URL
+    )
     yield
     await application.stop()
-
-app.router.lifespan = lifespan
 
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
