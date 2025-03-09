@@ -149,7 +149,7 @@ def apply_entities_to_caption(caption, entities):
         else:
             new_text = entity_text
         if end < len(result) and result[end] in '!.':  # Handle trailing punctuation
-            new_text += result[end]
+            new_text = new_text[:-1] + result[end] + new_text[-1]  # Move punctuation outside markup
             end += 1
         del result[start:end]
         result[start:start] = list(new_text)
@@ -199,17 +199,6 @@ async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, messa
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chat_id = update.message.chat_id
-        if chat_id in welcome_state and "message_ids" in welcome_state[chat_id]:
-            for msg_id in welcome_state[chat_id]["message_ids"][:]:
-                try:
-                    await context.bot.delete_message(chat_id, msg_id)
-                    welcome_state[chat_id]["message_ids"].remove(msg_id)
-                    logger.info(f"Successfully deleted old welcome message {msg_id}")
-                except Exception as e:
-                    logger.error(f"Failed to delete welcome message {msg_id}: {e}")
-            welcome_state[chat_id]["message_ids"] = []  # Clear list after attempts
-            save_welcome_state()
-
         if chat_id not in captcha_enabled:
             captcha_enabled[chat_id] = True
             save_captcha_state()
@@ -236,17 +225,30 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                     ws = welcome_state[chat_id]
                     text = ws["text"].replace("{username}", username)
-                    text = escape_markdown_v2(text)
-                    if ws["type"] == "text":
-                        msg = await context.bot.send_message(chat_id, text, parse_mode='MarkdownV2')
-                    elif ws["type"] == "photo":
-                        msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode='MarkdownV2')
-                    elif ws["type"] == "video":
-                        msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode='MarkdownV2')
-                    elif ws["type"] == "animation":
-                        msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode='MarkdownV2')
-                    welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
-                    save_welcome_state()
+                    escaped_text = escape_markdown_v2(text)
+                    try:
+                        if ws["type"] == "text":
+                            msg = await context.bot.send_message(chat_id, escaped_text, parse_mode='MarkdownV2')
+                        elif ws["type"] == "photo":
+                            msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                        elif ws["type"] == "video":
+                            msg = await context.bot.send_video(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                        elif ws["type"] == "animation":
+                            msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+                        welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
+                        save_welcome_state()
+                    except Exception as e:
+                        logger.error(f"Failed to send welcome with Markdown: {e}")
+                        if ws["type"] == "text":
+                            msg = await context.bot.send_message(chat_id, text, parse_mode=None)
+                        elif ws["type"] == "photo":
+                            msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                        elif ws["type"] == "video":
+                            msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                        elif ws["type"] == "animation":
+                            msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                        welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
+                        save_welcome_state()
     except Exception as e:
         logger.error(f"Error handling new member: {e}")
 
@@ -277,12 +279,24 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await context.bot.restrict_chat_member(chat_id, target_user_id, permissions)
             await query.message.delete()
+
+            # Clear old welcome messages
+            if chat_id in welcome_state and "message_ids" in welcome_state[chat_id]:
+                for msg_id in welcome_state[chat_id]["message_ids"][:]:
+                    try:
+                        await context.bot.delete_message(chat_id, msg_id)
+                        welcome_state[chat_id]["message_ids"].remove(msg_id)
+                        logger.info(f"Successfully deleted old welcome message {msg_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to delete welcome message {msg_id}: {e}")
+                welcome_state[chat_id]["message_ids"] = []  # Reset after attempts
+                save_welcome_state()
+
             if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                 ws = welcome_state[chat_id]
                 text = ws["text"].replace("{username}", username)
+                escaped_text = escape_markdown_v2(text)
                 try:
-                    text_with_entities = apply_entities_to_caption(text, [])
-                    escaped_text = escape_markdown_v2(text_with_entities)
                     if ws["type"] == "text":
                         msg = await context.bot.send_message(chat_id, escaped_text, parse_mode='MarkdownV2')
                     elif ws["type"] == "photo":
@@ -295,7 +309,17 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_welcome_state()
                 except Exception as e:
                     logger.error(f"Failed to send welcome with Markdown: {e}")
-                    await context.bot.send_message(chat_id, text, parse_mode=None)  # Fallback to plain text
+                    # Fallback: Send with plain text but ensure media is sent
+                    if ws["type"] == "text":
+                        msg = await context.bot.send_message(chat_id, text, parse_mode=None)
+                    elif ws["type"] == "photo":
+                        msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                    elif ws["type"] == "video":
+                        msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                    elif ws["type"] == "animation":
+                        msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                    welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
+                    save_welcome_state()
             else:
                 msg = await context.bot.send_message(chat_id, "✅ Verified!")
                 context.job_queue.run_once(lambda x: delete_message(x, chat_id, msg.message_id), 10, context=context)
@@ -470,16 +494,26 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
                 return
             ws = welcome_state[chat_id]
             text = ws["text"].replace("{username}", update.message.from_user.username or update.message.from_user.first_name)
-            text = escape_markdown_v2(text)
-            if ws["type"] == "text":
-                await update.message.reply_text(text, parse_mode='MarkdownV2')
-            elif ws["type"] in ["photo", "video", "animation"]:
-                if ws["type"] == "photo":
-                    await update.message.reply_photo(ws["file_id"], caption=text, parse_mode='MarkdownV2')
+            escaped_text = escape_markdown_v2(text)
+            try:
+                if ws["type"] == "text":
+                    await update.message.reply_text(escaped_text, parse_mode='MarkdownV2')
+                elif ws["type"] == "photo":
+                    await update.message.reply_photo(ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
                 elif ws["type"] == "video":
-                    await update.message.reply_video(ws["file_id"], caption=text, parse_mode='MarkdownV2')
+                    await update.message.reply_video(ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
                 elif ws["type"] == "animation":
-                    await update.message.reply_animation(ws["file_id"], caption=text, parse_mode='MarkdownV2')
+                    await update.message.reply_animation(ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
+            except Exception as e:
+                logger.error(f"Failed to send preview with Markdown: {e}")
+                if ws["type"] == "text":
+                    await update.message.reply_text(text, parse_mode=None)
+                elif ws["type"] == "photo":
+                    await update.message.reply_photo(ws["file_id"], caption=text, parse_mode=None)
+                elif ws["type"] == "video":
+                    await update.message.reply_video(ws["file_id"], caption=text, parse_mode=None)
+                elif ws["type"] == "animation":
+                    await update.message.reply_animation(ws["file_id"], caption=text, parse_mode=None)
     else:
         text = args[1]
         welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text})
