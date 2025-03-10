@@ -12,7 +12,7 @@ from telegram import (
     Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, User, MessageEntity
 )
 from telegram.ext import (
-    Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler, CommandHandler, ChatMemberUpdatedHandler
+    Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler, CommandHandler
 )
 from telegram.error import BadRequest, Forbidden
 
@@ -21,8 +21,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Log the version of python-telegram-bot
-logger.info(f"python-telegram-bot version: {telegram.__version__}")
+# Log the version at runtime for debugging
+logger.info(f"python-telegram-bot version at runtime: {telegram.__version__}")
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"
@@ -338,7 +338,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if new_message_id:
                     welcome_state[chat_id].setdefault("message_ids", []).append(new_message_id)
                     save_welcome_state()
-                    # Schedule deletion of the latest welcome message after 30 seconds
                     context.job_queue.run_once(lambda x: delete_message(x, chat_id, new_message_id), 30, context=context)
             else:
                 msg = await context.bot.send_message(chat_id, "✅ Verified!")
@@ -440,31 +439,27 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         logger.error(f"Filter error: {e}")
 
-async def handle_chat_member_updated(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        chat_id = update.effective_chat.id
-        if chat_id not in clean_system_state:
-            clean_system_state[chat_id] = False
-            save_clean_system_state()
-        if clean_system_state[chat_id] and update.message:  # Check if the update includes a system notice message
-            message_id = update.message.message_id
-            await delete_message(context, chat_id, message_id)
-            logger.info(f"Deleted ChatMemberUpdated system notice message {message_id} in chat {chat_id}")
-    except Exception as e:
-        logger.error(f"Error handling ChatMemberUpdated system notice: {e}")
-
 async def handle_status_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chat_id = update.effective_chat.id
         if chat_id not in clean_system_state:
             clean_system_state[chat_id] = False
             save_clean_system_state()
-        if clean_system_state[chat_id] and update.message and not update.message.new_chat_members:
+
+        # Handle chat member updates (e.g., joins, leaves, other system notices)
+        if clean_system_state[chat_id] and update.message:
             message_id = update.message.message_id
-            await delete_message(context, chat_id, message_id)
-            logger.info(f"Deleted StatusUpdate system notice message {message_id} in chat {chat_id}")
+            # Check if this is a system notice (e.g., not a new member join, which is handled separately)
+            if not update.message.new_chat_members and not update.message.left_chat_member:
+                await delete_message(context, chat_id, message_id)
+                logger.info(f"Deleted non-member status update system notice message {message_id} in chat {chat_id}")
+            # Handle other chat member updates (e.g., joins already covered by welcome_new_member)
+            elif update.message.new_chat_members or update.message.left_chat_member:
+                if clean_system_state[chat_id]:
+                    await delete_message(context, chat_id, message_id)
+                    logger.info(f"Deleted chat member update system notice message {message_id} in chat {chat_id}")
     except Exception as e:
-        logger.error(f"Error handling StatusUpdate system notice: {e}")
+        logger.error(f"Error handling status update: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -830,7 +825,6 @@ application.add_handler(CommandHandler("cleansystem", cleansystem_command))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
-application.add_handler(ChatMemberUpdatedHandler(handle_chat_member_updated))
 application.add_handler(MessageHandler(filters.StatusUpdate & ~filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_status_update))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
