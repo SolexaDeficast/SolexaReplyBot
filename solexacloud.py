@@ -183,8 +183,12 @@ async def get_user_id_from_reply(update: Update) -> int or None:
         return update.message.reply_to_message.from_user.id
     return None
 
-async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
+async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int = None, message_id: int = None):
     try:
+        if chat_id is None and message_id is None:  # Called via JobQueue
+            job = context.job
+            chat_id = job.data['chat_id']
+            message_id = job.data['message_id']
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         logger.info(f"Deleted message {message_id} in chat {chat_id}")
     except Exception as e:
@@ -325,7 +329,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_welcome_state()
             else:
                 msg = await context.bot.send_message(chat_id, "✅ Verified!")
-                context.job_queue.run_once(lambda x: delete_message(x, chat_id, msg.message_id), 10, context=context)
+                context.job_queue.run_once(delete_message, 10, data={'chat_id': chat_id, 'message_id': msg.message_id})
             del captcha_attempts[target_user_id]
         else:
             attempts += 1
@@ -450,9 +454,9 @@ async def handle_system_messages(update: Update, context: ContextTypes.DEFAULT_T
             message_id = update.message.message_id
             # Schedule deletion after 5 seconds
             context.job_queue.run_once(
-                lambda x: delete_message(x, chat_id, message_id), 
+                delete_message,  # Function to call
                 5,  # Delay in seconds
-                context=context
+                data={'chat_id': chat_id, 'message_id': message_id}  # Pass data instead of context
             )
     except Exception as e:
         logger.error(f"Error handling system message: {e}")
@@ -772,31 +776,43 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No permission ❌")
 
 async def cleansystem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Received /cleansystem command: {update.message.text}")
     if update.message.chat.type == "private":
         await update.message.reply_text("Group-only command ❌")
+        logger.info("Command rejected: private chat")
         return
-    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+    admins = await update.effective_chat.get_administrators()
+    admin_ids = [admin.user.id for admin in admins]
+    logger.info(f"Admins: {admin_ids}, User: {update.message.from_user.id}")
+    if update.message.from_user.id not in admin_ids:
         await update.message.reply_text("No permission ❌")
+        logger.info("Command rejected: no permission")
         return
     chat_id = update.message.chat_id
     if not context.args:
         await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
+        logger.info("Command rejected: no args")
         return
     action = context.args[0].upper()
+    logger.info(f"Processing action: {action}")
     if action == "ON":
         system_cleanup_enabled[chat_id] = True
         save_system_cleanup_state()
         await update.message.reply_text("System message cleanup enabled ✅")
+        logger.info("System cleanup enabled")
     elif action == "OFF":
         system_cleanup_enabled[chat_id] = False
         save_system_cleanup_state()
         await update.message.reply_text("System message cleanup disabled ✅")
+        logger.info("System cleanup disabled")
     elif action == "STATUS":
         state = system_cleanup_enabled.get(chat_id, True)
         status_text = "enabled" if state else "disabled"
         await update.message.reply_text(f"System message cleanup is currently {status_text}")
+        logger.info(f"Status reported: {status_text}")
     else:
         await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
+        logger.info("Command rejected: invalid action")
 
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
