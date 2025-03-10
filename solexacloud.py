@@ -825,7 +825,7 @@ application.add_handler(CommandHandler("cleansystem", cleansystem_command))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
-application.add_handler(MessageHandler(filters.StatusUpdate() & filters.NOT(filters.StatusUpdate.NEW_CHAT_MEMBERS), handle_status_update))
+application.add_handler(MessageHandler(filters.StatusUpdate() & ~filters.StatusUpdate.NEW_CHAT_MEMBERS(), handle_status_update))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
 @app.post("/telegram")
