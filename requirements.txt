@@ -6,7 +6,7 @@ httpx==0.28.1
 idna==3.10
 pyaes==1.6.1
 pyasn1==0.6.1
-python-telegram-bot==21.10
+python-telegram-bot[job-queue]==21.10  # Keep this line
 rsa==4.9
 sniffio==1.3.1
 Telethon==1.38.1
@@ -20,4 +20,3 @@ numpy==1.26.4
 decorator==4.4.2  # FIXED: Downgraded for compatibility with moviepy
 tqdm==4.66.2
 proglog==0.1.10
-python-telegram-bot[job-queue]==20.0
