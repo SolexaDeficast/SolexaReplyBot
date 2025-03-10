@@ -31,6 +31,8 @@ CAPTCHA_STATE_FILE = "/data/captcha_state.json"
 captcha_enabled = {}
 WELCOME_STATE_FILE = "/data/welcome_state.json"
 welcome_state = {}
+SYSTEM_CLEANUP_STATE_FILE = "/data/system_cleanup_state.json"
+system_cleanup_enabled = {}
 
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
@@ -116,6 +118,28 @@ def save_welcome_state():
         logger.info(f"Welcome state saved: {repr(welcome_state)}")
     except Exception as e:
         logger.error(f"Error saving welcome state: {e}")
+
+def load_system_cleanup_state():
+    global system_cleanup_enabled
+    try:
+        if os.path.exists(SYSTEM_CLEANUP_STATE_FILE):
+            with open(SYSTEM_CLEANUP_STATE_FILE, 'r') as f:
+                data = json.load(f)
+                system_cleanup_enabled = {int(chat_id): bool(state) for chat_id, state in data.items()}
+        else:
+            system_cleanup_enabled = {}
+        logger.info(f"System cleanup state loaded: {repr(system_cleanup_enabled)}")
+    except Exception as e:
+        logger.error(f"Error loading system cleanup state: {e}")
+        system_cleanup_enabled = {}
+
+def save_system_cleanup_state():
+    try:
+        with open(SYSTEM_CLEANUP_STATE_FILE, 'w') as f:
+            json.dump({str(chat_id): state for chat_id, state in system_cleanup_enabled.items()}, f)
+        logger.info(f"System cleanup state saved: {repr(system_cleanup_enabled)}")
+    except Exception as e:
+        logger.error(f"Error saving system cleanup state: {e}")
 
 def escape_markdown_v2(text):
     """
@@ -398,6 +422,40 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
                     return
     except Exception as e:
         logger.error(f"Filter error: {e}")
+
+async def handle_system_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        chat_id = update.message.chat_id
+        # Default to enabled if not set
+        if chat_id not in system_cleanup_enabled:
+            system_cleanup_enabled[chat_id] = True
+            save_system_cleanup_state()
+
+        if not system_cleanup_enabled[chat_id]:
+            return  # Skip if cleanup is disabled
+
+        # Check for various system message types
+        if (update.message.new_chat_members or 
+            update.message.left_chat_member or 
+            update.message.new_chat_title or 
+            update.message.new_chat_photo or 
+            update.message.delete_chat_photo or 
+            update.message.group_chat_created or 
+            update.message.supergroup_chat_created or 
+            update.message.channel_chat_created or 
+            update.message.migrate_to_chat_id or 
+            update.message.migrate_from_chat_id or 
+            update.message.pinned_message):
+            
+            message_id = update.message.message_id
+            # Schedule deletion after 5 seconds
+            context.job_queue.run_once(
+                lambda x: delete_message(x, chat_id, message_id), 
+                5,  # Delay in seconds
+                context=context
+            )
+    except Exception as e:
+        logger.error(f"Error handling system message: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -713,6 +771,33 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No permission ❌")
 
+async def cleansystem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type == "private":
+        await update.message.reply_text("Group-only command ❌")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await update.message.reply_text("No permission ❌")
+        return
+    chat_id = update.message.chat_id
+    if not context.args:
+        await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
+        return
+    action = context.args[0].upper()
+    if action == "ON":
+        system_cleanup_enabled[chat_id] = True
+        save_system_cleanup_state()
+        await update.message.reply_text("System message cleanup enabled ✅")
+    elif action == "OFF":
+        system_cleanup_enabled[chat_id] = False
+        save_system_cleanup_state()
+        await update.message.reply_text("System message cleanup disabled ✅")
+    elif action == "STATUS":
+        state = system_cleanup_enabled.get(chat_id, True)
+        status_text = "enabled" if state else "disabled"
+        await update.message.reply_text(f"System message cleanup is currently {status_text}")
+    else:
+        await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
+
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("setsolexawelcome", setsolexawelcome_command))
@@ -730,6 +815,8 @@ application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
+application.add_handler(MessageHandler(filters.StatusUpdate.ALL & ~filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_system_messages))
+application.add_handler(CommandHandler("cleansystem", cleansystem_command))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
 @app.post("/telegram")
@@ -745,6 +832,7 @@ async def startup():
     load_filters()
     load_captcha_state()
     load_welcome_state()
+    load_system_cleanup_state()
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
