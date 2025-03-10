@@ -3,11 +3,9 @@ import logging
 import json
 import random
 import re
-import asyncio
 from datetime import timedelta
 from fastapi import FastAPI, Request
 import uvicorn
-import telegram
 from telegram import (
     Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, User, MessageEntity
 )
@@ -16,29 +14,27 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest, Forbidden
 
+# Logging setup
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Log the version at runtime for debugging
-logger.info(f"python-telegram-bot version at runtime: {telegram.__version__}")
-
+# Environment variables
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"
 
+# Global variables
 captcha_attempts = {}
 app = FastAPI()
 application = Application.builder().token(TOKEN).build()
-
 user_id_cache = {}
+
+# File paths
 CAPTCHA_STATE_FILE = "/data/captcha_state.json"
 captcha_enabled = {}
 WELCOME_STATE_FILE = "/data/welcome_state.json"
 welcome_state = {}
-CLEAN_SYSTEM_STATE_FILE = "/data/clean_system_state.json"
-clean_system_state = {}
-
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
     "PutVideoTriggerKeywordHere": "PutMp4FileNameHere.mp4",
@@ -46,10 +42,10 @@ keyword_responses = {
     "slut": "SLUT.jpg",
     "launch cat": "launchcat.gif"
 }
-
 FILTERS_FILE = "/data/filters.json"
 filters_dict = {}
 
+# Load/save functions
 def load_filters():
     global filters_dict
     try:
@@ -124,28 +120,6 @@ def save_welcome_state():
     except Exception as e:
         logger.error(f"Error saving welcome state: {e}")
 
-def load_clean_system_state():
-    global clean_system_state
-    try:
-        if os.path.exists(CLEAN_SYSTEM_STATE_FILE):
-            with open(CLEAN_SYSTEM_STATE_FILE, 'r') as f:
-                data = json.load(f)
-                clean_system_state = {int(chat_id): bool(state) for chat_id, state in data.items()}
-        else:
-            clean_system_state = {}
-        logger.info(f"Clean system state loaded: {repr(clean_system_state)}")
-    except Exception as e:
-        logger.error(f"Error loading clean system state: {e}")
-        clean_system_state = {}
-
-def save_clean_system_state():
-    try:
-        with open(CLEAN_SYSTEM_STATE_FILE, 'w') as f:
-            json.dump({str(chat_id): state for chat_id, state in clean_system_state.items()}, f)
-        logger.info(f"Clean system state saved: {repr(clean_system_state)}")
-    except Exception as e:
-        logger.error(f"Error saving clean system state: {e}")
-
 def escape_markdown_v2(text):
     """
     Escape special characters for Telegram MarkdownV2, preserving * and _ for bold/italic.
@@ -190,7 +164,6 @@ async def get_user_id_from_reply(update: Update) -> int or None:
 
 async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
     try:
-        await asyncio.sleep(1)  # 1-second delay to avoid rate limits and allow visual confirmation
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         logger.info(f"Deleted message {message_id} in chat {chat_id}")
     except Exception as e:
@@ -198,21 +171,11 @@ async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, messa
 
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # Delete the system notice only if cleanup is enabled
         chat_id = update.message.chat_id
-        if chat_id not in clean_system_state:
-            clean_system_state[chat_id] = False
-            save_clean_system_state()
-        if clean_system_state[chat_id]:
-            message_id = update.message.message_id
-            await delete_message(context, chat_id, message_id)
-            logger.info(f"Deleted system notice message {message_id} in chat {chat_id}")
-
         if chat_id not in captcha_enabled:
             captcha_enabled[chat_id] = True
             save_captcha_state()
         captcha_active = captcha_enabled[chat_id]
-
         for member in update.message.new_chat_members:
             user_id = member.id
             username = member.username or member.first_name
@@ -221,7 +184,6 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 user_id_cache[chat_id] = {}
             if member.username:
                 user_id_cache[chat_id][member.username.lower()] = user_id
-
             if captcha_active:
                 permissions = ChatPermissions(can_send_messages=False)
                 await context.bot.restrict_chat_member(chat_id, user_id, permissions)
@@ -229,7 +191,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id, "username": username}
                 keyboard = [[InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")] for opt in options]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                await context.bot.send_message(chat_id=chat_id, text=f"Welcome {username}! Please verify yourself.\n\n{question}", reply_markup=reply_markup)
+                await context.bot.send_message(chat_id=chat_id, text=f"Welcome {username}! Please verify yourself.\n{question}", reply_markup=reply_markup)
             else:
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                     ws = welcome_state[chat_id]
@@ -292,7 +254,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await context.bot.restrict_chat_member(chat_id, target_user_id, permissions)
             await query.message.delete()
-
             if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                 ws = welcome_state[chat_id]
                 text = ws["text"].replace("{username}", username)
@@ -323,7 +284,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
                     new_message_id = msg.message_id  # Capture the new message ID in fallback
                     logger.info(f"Fallback welcome message sent, message_id: {new_message_id}")
-
                 # Clear old welcome messages *before* adding the new one
                 if "message_ids" in welcome_state[chat_id]:
                     for msg_id in welcome_state[chat_id]["message_ids"][:]:
@@ -333,12 +293,10 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             logger.info(f"Successfully deleted old welcome message {msg_id}")
                         except Exception as e:
                             logger.error(f"Failed to delete welcome message {msg_id}: {e}")
-                
-                # Add the new message ID to the list and schedule its deletion after 30 seconds
+                # Now add the new message ID to the list
                 if new_message_id:
                     welcome_state[chat_id].setdefault("message_ids", []).append(new_message_id)
                     save_welcome_state()
-                    context.job_queue.run_once(lambda x: delete_message(x, chat_id, new_message_id), 30, context=context)
             else:
                 msg = await context.bot.send_message(chat_id, "✅ Verified!")
                 context.job_queue.run_once(lambda x: delete_message(x, chat_id, msg.message_id), 10, context=context)
@@ -366,7 +324,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if chat_id not in user_id_cache:
                 user_id_cache[chat_id] = {}
             user_id_cache[chat_id][user.username.lower()] = user.id
-        
         message_text = update.message.text.strip().lower()
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
@@ -439,28 +396,6 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         logger.error(f"Filter error: {e}")
 
-async def handle_status_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        chat_id = update.effective_chat.id
-        if chat_id not in clean_system_state:
-            clean_system_state[chat_id] = False
-            save_clean_system_state()
-
-        # Handle chat member updates (e.g., joins, leaves, other system notices)
-        if clean_system_state[chat_id] and update.message:
-            message_id = update.message.message_id
-            # Check if this is a system notice (e.g., not a new member join, which is handled separately)
-            if not update.message.new_chat_members and not update.message.left_chat_member:
-                await delete_message(context, chat_id, message_id)
-                logger.info(f"Deleted non-member status update system notice message {message_id} in chat {chat_id}")
-            # Handle other chat member updates (e.g., joins already covered by welcome_new_member)
-            elif update.message.new_chat_members or update.message.left_chat_member:
-                if clean_system_state[chat_id]:
-                    await delete_message(context, chat_id, message_id)
-                    logger.info(f"Deleted chat member update system notice message {message_id} in chat {chat_id}")
-    except Exception as e:
-        logger.error(f"Error handling status update: {e}")
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "Features:\n"
@@ -469,7 +404,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Custom welcome message after verification (set with /setsolexawelcome <message> or media, use {username})\n"
         "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, /unban, etc\n"
         "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
-        "- Toggle system notification cleanup with /cleansystem ON|OFF\n"
         "- Supports *bold*, _italics_, [hyperlinks](https://example.com), and links\n"
         "- Contact admin for help"
     )
@@ -513,7 +447,6 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
     chat_id = update.message.chat_id
     if chat_id not in welcome_state:
         welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "entities": [], "message_ids": []}
-
     args = update.message.text.split(maxsplit=1)
     if len(args) < 2:
         await update.message.reply_text("Usage: /setsolexawelcome <message> or ON|OFF|status|preview")
@@ -581,7 +514,6 @@ async def setsolexawelcome_media(update: Update, context: ContextTypes.DEFAULT_T
     chat_id = update.message.chat_id
     if chat_id not in welcome_state:
         welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "entities": [], "message_ids": []}
-
     args = update.message.caption.split(maxsplit=1)
     raw_caption = args[1] if len(args) > 1 else ""
     if update.message.photo:
@@ -769,44 +701,33 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del filters_dict[chat_id][keyword]
                 save_filters()
                 await update.message.reply_text(f"Filter '{keyword}' removed ✅")
-            else:
-                await update.message.reply_text("Filter not found ❌")
-        except IndexError:
-            await update.message.reply_text("Usage: /removesolexafilter keyword")
+        else:
+            await update.message.reply_text("Filter not found ❌")
+    except IndexError:
+        await update.message.reply_text("Usage: /removesolexafilter keyword")
     else:
         await update.message.reply_text("No permission ❌")
 
-async def cleansystem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type == "private":
-        await update.message.reply_text("Group-only command ❌")
-        return
-    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-        await update.message.reply_text("No permission ❌")
-        return
-    chat_id = update.message.chat_id
-    if chat_id not in clean_system_state:
-        clean_system_state[chat_id] = False  # Default to off
-        save_clean_system_state()
+# New Feature: Automatically Delete System Messages
+async def delete_system_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if update.message:
+            chat_id = update.message.chat_id
+            message_id = update.message.message_id
 
-    if not context.args:
-        await update.message.reply_text("Usage: /cleansystem ON|OFF|status")
-        return
-    action = context.args[0].upper()
-    if action == "ON":
-        clean_system_state[chat_id] = True
-        save_clean_system_state()
-        await update.message.reply_text("System notification cleanup enabled ✅")
-    elif action == "OFF":
-        clean_system_state[chat_id] = False
-        save_clean_system_state()
-        await update.message.reply_text("System notification cleanup disabled ✅")
-    elif action == "STATUS":
-        state = clean_system_state.get(chat_id, False)
-        status_text = "enabled" if state else "disabled"
-        await update.message.reply_text(f"System notification cleanup is currently {status_text}")
-    else:
-        await update.message.reply_text("Usage: /cleansystem ON|OFF|status")
+            # Check if the message is a system message
+            if update.message.left_chat_member or update.message.new_chat_members or \
+                    update.message.pinned_message or update.message.migrate_from_chat_id or \
+                    update.message.migrate_to_chat_id or update.message.group_chat_created or \
+                    update.message.supergroup_chat_created or update.message.channel_chat_created:
+                logger.info(f"System message detected: {update.message}")
+                context.job_queue.run_once(
+                    lambda _: delete_message(_, chat_id, message_id), 5, context=context
+                )
+    except Exception as e:
+        logger.error(f"Error deleting system message: {e}")
 
+# Add Handlers
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("setsolexawelcome", setsolexawelcome_command))
@@ -821,13 +742,15 @@ application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, add_media_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
-application.add_handler(CommandHandler("cleansystem", cleansystem_command))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
-application.add_handler(MessageHandler(filters.StatusUpdate() & ~filters.StatusUpdate.NEW_CHAT_MEMBERS(), handle_status_update))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
+# Add Handler for System Message Deletion
+application.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_system_messages))
+
+# Webhook Setup
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     data = await request.json()
@@ -841,7 +764,6 @@ async def startup():
     load_filters()
     load_captcha_state()
     load_welcome_state()
-    load_clean_system_state()
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
