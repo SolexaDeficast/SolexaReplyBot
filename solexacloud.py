@@ -258,6 +258,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ws = welcome_state[chat_id]
                 text = ws["text"].replace("{username}", username)
                 escaped_text = escape_markdown_v2(text)
+                new_message_id = None  # Temporary storage for the new message ID
                 try:
                     logger.info(f"Sending welcome with MarkdownV2: {repr(escaped_text)}")
                     if ws["type"] == "text":
@@ -268,9 +269,8 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         msg = await context.bot.send_video(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
                     elif ws["type"] == "animation":
                         msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
-                    welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
-                    save_welcome_state()
-                    logger.info(f"Welcome message sent successfully, message_id: {msg.message_id}")
+                    new_message_id = msg.message_id  # Capture the new message ID
+                    logger.info(f"Welcome message sent successfully, message_id: {new_message_id}")
                 except Exception as e:
                     logger.error(f"Failed to send welcome with MarkdownV2: {e}")
                     logger.info(f"Falling back to plain text: {text}")
@@ -282,11 +282,10 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
                     elif ws["type"] == "animation":
                         msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                    welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
-                    save_welcome_state()
-                    logger.info(f"Fallback welcome message sent, message_id: {msg.message_id}")
+                    new_message_id = msg.message_id  # Capture the new message ID in fallback
+                    logger.info(f"Fallback welcome message sent, message_id: {new_message_id}")
 
-                # Clear old welcome messages
+                # Clear old welcome messages *before* adding the new one
                 if "message_ids" in welcome_state[chat_id]:
                     for msg_id in welcome_state[chat_id]["message_ids"][:]:
                         try:
@@ -295,6 +294,10 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             logger.info(f"Successfully deleted old welcome message {msg_id}")
                         except Exception as e:
                             logger.error(f"Failed to delete welcome message {msg_id}: {e}")
+                
+                # Now add the new message ID to the list
+                if new_message_id:
+                    welcome_state[chat_id].setdefault("message_ids", []).append(new_message_id)
                     save_welcome_state()
             else:
                 msg = await context.bot.send_message(chat_id, "✅ Verified!")
