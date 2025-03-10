@@ -702,9 +702,11 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 save_filters()
                 await update.message.reply_text(f"Filter '{keyword}' removed ✅")
             else:
-                await update.message.reply_text("Filter not found ❌")
-        except IndexError:
-            await update.message.reply_text("Usage: /removesolexafilter keyword")
+                await update.message
+        else:
+            await update.message.reply_text("Filter not found ❌")
+    except IndexError:
+        await update.message.reply_text("Usage: /removesolexafilter keyword")
     else:
         await update.message.reply_text("No permission ❌")
 
@@ -716,14 +718,25 @@ async def delete_system_messages(update: Update, context: ContextTypes.DEFAULT_T
             message_id = update.message.message_id
 
             # Check if the message is a system message
-            if update.message.left_chat_member or update.message.new_chat_members or \
-                    update.message.pinned_message or update.message.migrate_from_chat_id or \
-                    update.message.migrate_to_chat_id or update.message.group_chat_created or \
-                    update.message.supergroup_chat_created or update.message.channel_chat_created:
+            if (
+                update.message.left_chat_member or
+                update.message.new_chat_members or
+                update.message.pinned_message or
+                update.message.migrate_from_chat_id or
+                update.message.migrate_to_chat_id or
+                update.message.group_chat_created or
+                update.message.supergroup_chat_created or
+                update.message.channel_chat_created
+            ):
                 logger.info(f"System message detected: {update.message}")
-                context.job_queue.run_once(
-                    lambda _: delete_message(_, chat_id, message_id), 5, context=context
-                )
+                
+                # Schedule deletion of the system message after 5 seconds
+                if context.job_queue:
+                    context.job_queue.run_once(
+                        lambda _: delete_message(_, chat_id, message_id), 5, context=context
+                    )
+                else:
+                    logger.error("JobQueue is not initialized.")
     except Exception as e:
         logger.error(f"Error deleting system message: {e}")
 
@@ -761,9 +774,19 @@ async def telegram_webhook(request: Request):
 
 @app.on_event("startup")
 async def startup():
+    global application
+    # Initialize the bot and dispatcher
+    application = Application.builder().token(TOKEN).build()
+
+    # Initialize the JobQueue
+    application.job_queue.start()
+
+    # Load saved states
     load_filters()
     load_captcha_state()
     load_welcome_state()
+
+    # Set webhook
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
