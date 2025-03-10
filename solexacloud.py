@@ -702,13 +702,11 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 save_filters()
                 await update.message.reply_text(f"Filter '{keyword}' removed ✅")
             else:
-                await update.message
-        else:
-            await update.message.reply_text("Filter not found ❌")
-    except IndexError:
-        await update.message.reply_text("Usage: /removesolexafilter keyword")
+                await update.message.reply_text("Filter not found ❌")  # Fixed: Moved this line here
+        except IndexError:
+            await update.message.reply_text("Usage: /removesolexafilter keyword")
     else:
-        await update.message.reply_text("No permission ❌")
+        await update.message.reply_text("No permission ❌")  # Fixed: Moved this line here
 
 # New Feature: Automatically Delete System Messages
 async def delete_system_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
