@@ -7,6 +7,7 @@ import asyncio
 from datetime import timedelta
 from fastapi import FastAPI, Request
 import uvicorn
+import telegram
 from telegram import (
     Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, User, MessageEntity
 )
@@ -19,6 +20,9 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Log the version of python-telegram-bot
+logger.info(f"python-telegram-bot version: {telegram.__version__}")
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL') + "/telegram"
