@@ -142,11 +142,7 @@ def save_system_cleanup_state():
         logger.error(f"Error saving system cleanup state: {e}")
 
 def escape_markdown_v2(text):
-    """
-    Escape special characters for Telegram MarkdownV2, preserving * and _ for bold/italic.
-    Special characters to escape: ` > # + - = | { } . ! \ , except * and _
-    """
-    special_chars = r'([`>#+\-=|{}\.!\\,])'  # Exclude * and _ from escaping
+    special_chars = r'([`>#+\-=|{}\.!\\,])'
     escaped_text = re.sub(special_chars, r'\\\1', text)
     logger.info(f"Raw MarkdownV2 text: {repr(text)}")
     logger.info(f"Escaped MarkdownV2 text: {repr(escaped_text)}")
@@ -185,7 +181,7 @@ async def get_user_id_from_reply(update: Update) -> int or None:
 
 async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int = None, message_id: int = None):
     try:
-        if chat_id is None and message_id is None:  # Called via JobQueue
+        if chat_id is None and message_id is None:
             job = context.job
             chat_id = job.data['chat_id']
             message_id = job.data['message_id']
@@ -286,7 +282,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ws = welcome_state[chat_id]
                 text = ws["text"].replace("{username}", username)
                 escaped_text = escape_markdown_v2(text)
-                new_message_id = None  # Temporary storage for the new message ID
+                new_message_id = None
                 try:
                     logger.info(f"Sending welcome with MarkdownV2: {repr(escaped_text)}")
                     if ws["type"] == "text":
@@ -297,7 +293,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         msg = await context.bot.send_video(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
                     elif ws["type"] == "animation":
                         msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=escaped_text, parse_mode='MarkdownV2')
-                    new_message_id = msg.message_id  # Capture the new message ID
+                    new_message_id = msg.message_id
                     logger.info(f"Welcome message sent successfully, message_id: {new_message_id}")
                 except Exception as e:
                     logger.error(f"Failed to send welcome with MarkdownV2: {e}")
@@ -310,10 +306,9 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
                     elif ws["type"] == "animation":
                         msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                    new_message_id = msg.message_id  # Capture the new message ID in fallback
+                    new_message_id = msg.message_id
                     logger.info(f"Fallback welcome message sent, message_id: {new_message_id}")
 
-                # Clear old welcome messages *before* adding the new one
                 if "message_ids" in welcome_state[chat_id]:
                     for msg_id in welcome_state[chat_id]["message_ids"][:]:
                         try:
@@ -323,7 +318,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception as e:
                             logger.error(f"Failed to delete welcome message {msg_id}: {e}")
                 
-                # Now add the new message ID to the list
                 if new_message_id:
                     welcome_state[chat_id].setdefault("message_ids", []).append(new_message_id)
                     save_welcome_state()
@@ -359,6 +353,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
                 if message_text == keyword or message_text == f"/{keyword}":
+                    logger.info(f"Filter triggered: '{keyword}' -> '{response}'")
                     if isinstance(response, dict) and 'type' in response and 'file_id' in response:
                         media_type = response['type']
                         file_id = response['file_id']
@@ -405,6 +400,7 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
         if chat_id in filters_dict:
             for keyword, response in filters_dict[chat_id].items():
                 if message_text == f"/{keyword}":
+                    logger.info(f"Filter triggered as command: '/{keyword}' -> '{response}'")
                     if isinstance(response, dict) and 'type' in response and 'file_id' in response:
                         media_type = response['type']
                         file_id = response['file_id']
@@ -430,15 +426,13 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
 async def handle_system_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chat_id = update.message.chat_id
-        # Default to enabled if not set
         if chat_id not in system_cleanup_enabled:
             system_cleanup_enabled[chat_id] = True
             save_system_cleanup_state()
 
         if not system_cleanup_enabled[chat_id]:
-            return  # Skip if cleanup is disabled
+            return
 
-        # Check for various system message types
         if (update.message.new_chat_members or 
             update.message.left_chat_member or 
             update.message.new_chat_title or 
@@ -449,17 +443,42 @@ async def handle_system_messages(update: Update, context: ContextTypes.DEFAULT_T
             update.message.channel_chat_created or 
             update.message.migrate_to_chat_id or 
             update.message.migrate_from_chat_id or 
-            update.message.pinned_message):
+            update.message.pinned_message or
+            update.message.chat_member_updated):
             
             message_id = update.message.message_id
-            # Schedule deletion after 5 seconds
             context.job_queue.run_once(
-                delete_message,  # Function to call
-                5,  # Delay in seconds
-                data={'chat_id': chat_id, 'message_id': message_id}  # Pass data instead of context
+                delete_message,
+                5,
+                data={'chat_id': chat_id, 'message_id': message_id}
             )
     except Exception as e:
         logger.error(f"Error handling system message: {e}")
+
+async def handle_text_system_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not update.message or not update.message.text:
+            return
+        chat_id = update.message.chat_id
+        if chat_id not in system_cleanup_enabled:
+            system_cleanup_enabled[chat_id] = True
+            save_system_cleanup_state()
+
+        if not system_cleanup_enabled[chat_id]:
+            return
+
+        if (update.message.from_user is None or 
+            "added" in update.message.text.lower() or 
+            "removed" in update.message.text.lower() or 
+            "changed" in update.message.text.lower()):
+            message_id = update.message.message_id
+            context.job_queue.run_once(
+                delete_message,
+                5,
+                data={'chat_id': chat_id, 'message_id': message_id}
+            )
+    except Exception as e:
+        logger.error(f"Error handling text system message: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -777,42 +796,55 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cleansystem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Received /cleansystem command: {update.message.text}")
-    if update.message.chat.type == "private":
-        await update.message.reply_text("Group-only command ❌")
-        logger.info("Command rejected: private chat")
-        return
-    admins = await update.effective_chat.get_administrators()
-    admin_ids = [admin.user.id for admin in admins]
-    logger.info(f"Admins: {admin_ids}, User: {update.message.from_user.id}")
-    if update.message.from_user.id not in admin_ids:
-        await update.message.reply_text("No permission ❌")
-        logger.info("Command rejected: no permission")
-        return
-    chat_id = update.message.chat_id
-    if not context.args:
-        await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
-        logger.info("Command rejected: no args")
-        return
-    action = context.args[0].upper()
-    logger.info(f"Processing action: {action}")
-    if action == "ON":
-        system_cleanup_enabled[chat_id] = True
-        save_system_cleanup_state()
-        await update.message.reply_text("System message cleanup enabled ✅")
-        logger.info("System cleanup enabled")
-    elif action == "OFF":
-        system_cleanup_enabled[chat_id] = False
-        save_system_cleanup_state()
-        await update.message.reply_text("System message cleanup disabled ✅")
-        logger.info("System cleanup disabled")
-    elif action == "STATUS":
-        state = system_cleanup_enabled.get(chat_id, True)
-        status_text = "enabled" if state else "disabled"
-        await update.message.reply_text(f"System message cleanup is currently {status_text}")
-        logger.info(f"Status reported: {status_text}")
-    else:
-        await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
-        logger.info("Command rejected: invalid action")
+    try:
+        if update.message.chat.type == "private":
+            await update.message.reply_text("Group-only command ❌")
+            logger.info("Command rejected: private chat")
+            return
+        
+        try:
+            admins = await update.effective_chat.get_administrators()
+            admin_ids = [admin.user.id for admin in admins]
+            logger.info(f"Admins: {admin_ids}, User: {update.message.from_user.id}")
+        except Exception as e:
+            logger.error(f"Failed to fetch admins: {e}")
+            await update.message.reply_text("Error fetching admins ❌")
+            return
+
+        if update.message.from_user.id not in admin_ids:
+            await update.message.reply_text("No permission ❌")
+            logger.info("Command rejected: no permission")
+            return
+
+        chat_id = update.message.chat_id
+        if not context.args:
+            await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
+            logger.info("Command rejected: no args")
+            return
+
+        action = context.args[0].upper()
+        logger.info(f"Processing action: {action}")
+        if action == "ON":
+            system_cleanup_enabled[chat_id] = True
+            save_system_cleanup_state()
+            await update.message.reply_text("System message cleanup enabled ✅")
+            logger.info("System cleanup enabled")
+        elif action == "OFF":
+            system_cleanup_enabled[chat_id] = False
+            save_system_cleanup_state()
+            await update.message.reply_text("System message cleanup disabled ✅")
+            logger.info("System cleanup disabled")
+        elif action == "STATUS":
+            state = system_cleanup_enabled.get(chat_id, True)
+            status_text = "enabled" if state else "disabled"
+            await update.message.reply_text(f"System message cleanup is currently {status_text}")
+            logger.info(f"Status reported: {status_text}")
+        else:
+            await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
+            logger.info("Command rejected: invalid action")
+    except Exception as e:
+        logger.error(f"Error in cleansystem_command: {e}")
+        await update.message.reply_text("An error occurred ❌")
 
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
@@ -832,6 +864,7 @@ application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, we
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.ALL & ~filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_system_messages))
+application.add_handler(MessageHandler(filters.TEXT & filters.StatusUpdate.ALL & ~filters.COMMAND, handle_text_system_messages))
 application.add_handler(CommandHandler("cleansystem", cleansystem_command))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
