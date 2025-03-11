@@ -447,6 +447,7 @@ async def handle_system_messages(update: Update, context: ContextTypes.DEFAULT_T
             update.message.chat_member_updated):
             
             message_id = update.message.message_id
+            logger.info(f"Cleaning status update system message (ID: {message_id})")
             context.job_queue.run_once(
                 delete_message,
                 5,
@@ -467,11 +468,16 @@ async def handle_text_system_messages(update: Update, context: ContextTypes.DEFA
         if not system_cleanup_enabled[chat_id]:
             return
 
+        message_text = update.message.text.lower()
         if (update.message.from_user is None or 
-            "added" in update.message.text.lower() or 
-            "removed" in update.message.text.lower() or 
-            "changed" in update.message.text.lower()):
+            "added" in message_text or 
+            "removed" in message_text or 
+            "changed" in message_text or
+            "joined the group" in message_text or
+            "kicked" in message_text or
+            "left the group" in message_text):
             message_id = update.message.message_id
+            logger.info(f"Cleaning system message: {message_text} (ID: {message_id})")
             context.job_queue.run_once(
                 delete_message,
                 5,
@@ -795,31 +801,34 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No permission ❌")
 
 async def cleansystem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Received /cleansystem command: {update.message.text}")
+    logger.info(f"Received /cleansystem command: {update.message.text} from user {update.message.from_user.id}")
     try:
         if update.message.chat.type == "private":
             await update.message.reply_text("Group-only command ❌")
             logger.info("Command rejected: private chat")
             return
         
+        admin_ids = []
         try:
             admins = await update.effective_chat.get_administrators()
             admin_ids = [admin.user.id for admin in admins]
-            logger.info(f"Admins: {admin_ids}, User: {update.message.from_user.id}")
+            logger.info(f"Admins in chat {update.message.chat_id}: {admin_ids}")
         except Exception as e:
-            logger.error(f"Failed to fetch admins: {e}")
-            await update.message.reply_text("Error fetching admins ❌")
+            logger.error(f"Failed to fetch admins for chat {update.message.chat_id}: {e}")
+            await update.message.reply_text("Error: Unable to fetch admin list. Please ensure I have admin permissions. ❌")
             return
 
-        if update.message.from_user.id not in admin_ids:
+        user_id = update.message.from_user.id
+        logger.info(f"Checking if user {user_id} is an admin...")
+        if user_id not in admin_ids:
             await update.message.reply_text("No permission ❌")
-            logger.info("Command rejected: no permission")
+            logger.info("Command rejected: user is not an admin")
             return
 
         chat_id = update.message.chat_id
         if not context.args:
             await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
-            logger.info("Command rejected: no args")
+            logger.info("Command rejected: no arguments provided")
             return
 
         action = context.args[0].upper()
@@ -843,8 +852,8 @@ async def cleansystem_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
             logger.info("Command rejected: invalid action")
     except Exception as e:
-        logger.error(f"Error in cleansystem_command: {e}")
-        await update.message.reply_text("An error occurred ❌")
+        logger.error(f"Unexpected error in cleansystem_command: {e}")
+        await update.message.reply_text("An unexpected error occurred. Please check the logs. ❌")
 
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
@@ -864,7 +873,7 @@ application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, we
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.ALL & ~filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_system_messages))
-application.add_handler(MessageHandler(filters.TEXT & filters.StatusUpdate.ALL & ~filters.COMMAND, handle_text_system_messages))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_system_messages))
 application.add_handler(CommandHandler("cleansystem", cleansystem_command))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
 
