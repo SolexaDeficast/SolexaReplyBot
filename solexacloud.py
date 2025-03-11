@@ -198,8 +198,9 @@ async def delete_system_messages(update: Update, context: ContextTypes.DEFAULT_T
             logger.info(f"Skipping message {message_id} in chat {chat_id} as it’s from the bot")
             return
 
+        # Define system message conditions
         is_system_message = (
-            not from_user or
+            (not from_user and not update.message.text) or  # Messages without a sender (e.g., anonymous group actions)
             update.message.left_chat_member or
             update.message.new_chat_title or
             update.message.new_chat_photo or
@@ -236,12 +237,16 @@ async def handle_chat_member_updates(update: Update, context: ContextTypes.DEFAU
         old_status = update.chat_member.old_chat_member.status if update.chat_member.old_chat_member else None
 
         logger.info(f"Chat member update: New Status: {new_status}, Old Status: {old_status}, Chat: {chat_id}")
-        # The associated message (e.g., "X joined via invite link") should be caught by delete_system_messages
     except Exception as e:
         logger.error(f"Error processing chat_member update: {e}")
 
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Processing new member update: {update.to_dict()}")
     try:
+        if not update.message or not update.message.new_chat_members:
+            logger.info("No new chat members in update, skipping")
+            return
+
         chat_id = update.message.chat_id
         if chat_id not in captcha_enabled:
             captcha_enabled[chat_id] = True
@@ -258,14 +263,24 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 user_id_cache[chat_id][member.username.lower()] = user_id
 
             if captcha_active:
-                permissions = ChatPermissions(can_send_messages=False)
-                await context.bot.restrict_chat_member(chat_id, user_id, permissions)
-                question, options, correct_answer = generate_captcha()
-                captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id, "username": username}
-                keyboard = [[InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")] for opt in options]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                msg = await context.bot.send_message(chat_id=chat_id, text=f"Welcome {username}! Please verify yourself.\n\n{question}", reply_markup=reply_markup)
-                logger.info(f"Captcha message sent, message_id: {msg.message_id}")
+                try:
+                    permissions = ChatPermissions(can_send_messages=False)
+                    await context.bot.restrict_chat_member(chat_id, user_id, permissions)
+                    logger.info(f"Restricted user {user_id} in chat {chat_id}")
+                except Exception as e:
+                    logger.error(f"Failed to restrict user {user_id} in chat {chat_id}: {e}")
+                    return
+
+                try:
+                    question, options, correct_answer = generate_captcha()
+                    captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id, "username": username}
+                    keyboard = [[InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")] for opt in options]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    msg = await context.bot.send_message(chat_id=chat_id, text=f"Welcome {username}! Please verify yourself.\n\n{question}", reply_markup=reply_markup)
+                    logger.info(f"Captcha message sent, message_id: {msg.message_id}")
+                except Exception as e:
+                    logger.error(f"Failed to send captcha message for user {user_id} in chat {chat_id}: {e}")
+                    return
             else:
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                     ws = welcome_state[chat_id]
@@ -287,26 +302,31 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     except Exception as e:
                         logger.error(f"Failed to send welcome with MarkdownV2: {e}")
                         logger.info(f"Falling back to plain text: {text}")
-                        if ws["type"] == "text":
-                            msg = await context.bot.send_message(chat_id, text, parse_mode=None)
-                        elif ws["type"] == "photo":
-                            msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                        elif ws["type"] == "video":
-                            msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                        elif ws["type"] == "animation":
-                            msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                        welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
-                        save_welcome_state()
-                        logger.info(f"Fallback welcome message sent, message_id: {msg.message_id}")
+                        try:
+                            if ws["type"] == "text":
+                                msg = await context.bot.send_message(chat_id, text, parse_mode=None)
+                            elif ws["type"] == "photo":
+                                msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                            elif ws["type"] == "video":
+                                msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                            elif ws["type"] == "animation":
+                                msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                            welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
+                            save_welcome_state()
+                            logger.info(f"Fallback welcome message sent, message_id: {msg.message_id}")
+                        except Exception as e:
+                            logger.error(f"Failed to send fallback welcome message: {e}")
     except Exception as e:
         logger.error(f"Error handling new member: {e}")
 
 async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Processing captcha verification: {update.to_dict()}")
     try:
         query = update.callback_query
         user_id = query.from_user.id
         data = query.data.split("_")
         if len(data) != 3:
+            logger.warning("Invalid captcha callback data")
             return
         _, target_user_id, answer = data
         target_user_id = int(target_user_id)
@@ -349,16 +369,19 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.error(f"Failed to send welcome with MarkdownV2: {e}")
                     logger.info(f"Falling back to plain text: {text}")
-                    if ws["type"] == "text":
-                        msg = await context.bot.send_message(chat_id, text, parse_mode=None)
-                    elif ws["type"] == "photo":
-                        msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                    elif ws["type"] == "video":
-                        msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                    elif ws["type"] == "animation":
-                        msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                    new_message_id = msg.message_id
-                    logger.info(f"Fallback welcome message sent, message_id: {new_message_id}")
+                    try:
+                        if ws["type"] == "text":
+                            msg = await context.bot.send_message(chat_id, text, parse_mode=None)
+                        elif ws["type"] == "photo":
+                            msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                        elif ws["type"] == "video":
+                            msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                        elif ws["type"] == "animation":
+                            msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                        new_message_id = msg.message_id
+                        logger.info(f"Fallback welcome message sent, message_id: {new_message_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to send fallback welcome message: {e}")
 
                 if "message_ids" in welcome_state[chat_id]:
                     for msg_id in welcome_state[chat_id]["message_ids"][:]:
@@ -374,7 +397,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_welcome_state()
             else:
                 msg = await context.bot.send_message(chat_id, "✅ Verified!")
-                context.job_queue.run_once(delete_message, 10, data={'chat_id': chat_id, 'message_id': msg.message_id})
+                context.job_queue.run_once(delete_message, 10, data={'chat_id': `chat_id`, 'message_id': msg.message_id})
             del captcha_attempts[target_user_id]
         else:
             attempts += 1
@@ -566,15 +589,18 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
             except Exception as e:
                 logger.error(f"Failed to send preview with MarkdownV2: {e}")
                 logger.info(f"Falling back to plain text: {text}")
-                if ws["type"] == "text":
-                    msg = await context.bot.send_message(chat_id, text, parse_mode=None)
-                elif ws["type"] == "photo":
-                    msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                elif ws["type"] == "video":
-                    msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                elif ws["type"] == "animation":
-                    msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
-                logger.info(f"Fallback preview sent, message_id: {msg.message_id}")
+                try:
+                    if ws["type"] == "text":
+                        msg = await context.bot.send_message(chat_id, text, parse_mode=None)
+                    elif ws["type"] == "photo":
+                        msg = await context.bot.send_photo(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                    elif ws["type"] == "video":
+                        msg = await context.bot.send_video(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                    elif ws["type"] == "animation":
+                        msg = await context.bot.send_animation(chat_id, ws["file_id"], caption=text, parse_mode=None)
+                    logger.info(f"Fallback preview sent, message_id: {msg.message_id}")
+                except Exception as e:
+                    logger.error(f"Failed to send fallback preview: {e}")
     else:
         text = args[1]
         welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text, "entities": [], "message_ids": []})
@@ -789,8 +815,9 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No permission ❌")
 
 # Handler registration
-application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, delete_system_messages))
 application.add_handler(ChatMemberHandler(handle_chat_member_updates, ChatMemberHandler.CHAT_MEMBER))
+application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))  # Moved above delete_system_messages
+application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, delete_system_messages))
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("setsolexawelcome", setsolexawelcome_command))
@@ -805,7 +832,6 @@ application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, add_media_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
-application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
