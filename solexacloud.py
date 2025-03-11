@@ -188,9 +188,18 @@ async def delete_system_messages(update: Update, context: ContextTypes.DEFAULT_T
         message_id = update.message.message_id
         from_user = update.message.from_user
 
+        # Skip if this is a new member join (to allow welcome/captcha processing)
+        if update.message.new_chat_members:
+            logger.info(f"Skipping system message {message_id} in chat {chat_id} due to new member join")
+            return
+
+        # Skip if this is a message from the bot (e.g., captcha or welcome message)
+        if from_user and from_user.id == context.bot.id:
+            logger.info(f"Skipping message {message_id} in chat {chat_id} as it’s from the bot")
+            return
+
         is_system_message = (
             not from_user or
-            update.message.new_chat_members or
             update.message.left_chat_member or
             update.message.new_chat_title or
             update.message.new_chat_photo or
@@ -255,7 +264,8 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id, "username": username}
                 keyboard = [[InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")] for opt in options]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                await context.bot.send_message(chat_id=chat_id, text=f"Welcome {username}! Please verify yourself.\n\n{question}", reply_markup=reply_markup)
+                msg = await context.bot.send_message(chat_id=chat_id, text=f"Welcome {username}! Please verify yourself.\n\n{question}", reply_markup=reply_markup)
+                logger.info(f"Captcha message sent, message_id: {msg.message_id}")
             else:
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                     ws = welcome_state[chat_id]
