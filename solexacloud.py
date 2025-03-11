@@ -397,7 +397,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_welcome_state()
             else:
                 msg = await context.bot.send_message(chat_id, "✅ Verified!")
-                context.job_queue.run_once(delete_message, 10, data={'chat_id': `chat_id`, 'message_id': msg.message_id})
+                context.job_queue.run_once(delete_message, 10, data={'chat_id': chat_id, 'message_id': msg.message_id})
             del captcha_attempts[target_user_id]
         else:
             attempts += 1
@@ -816,8 +816,8 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Handler registration
 application.add_handler(ChatMemberHandler(handle_chat_member_updates, ChatMemberHandler.CHAT_MEMBER))
-application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))  # Moved above delete_system_messages
-application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, delete_system_messages))
+application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
+application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND & ~filters.StatusUpdate.NEW_CHAT_MEMBERS, delete_system_messages))
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("setsolexawelcome", setsolexawelcome_command))
