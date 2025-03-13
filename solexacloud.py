@@ -507,7 +507,9 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text("Welcome text set ✅")
 
 async def setsolexawelcome_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Entered setsolexawelcome_media for update: {update.message}")
     if not update.message.caption or not update.message.caption.startswith('/setsolexawelcome'):
+        logger.info("Message skipped: No caption or not starting with /setsolexawelcome")
         return
     if update.message.chat.type == "private":
         await update.message.reply_text("Group-only command ❌")
@@ -754,10 +756,10 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No permission ❌")
 
+# Handler registrations reordered to prioritize add_media_filter
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("setsolexawelcome", setsolexawelcome_command))
-application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, setsolexawelcome_media))
 application.add_handler(CommandHandler("ban", ban_user))
 application.add_handler(CommandHandler("kick", kick_user))
 application.add_handler(CommandHandler("mute10", mute10))
@@ -765,7 +767,9 @@ application.add_handler(CommandHandler("mute30", mute30))
 application.add_handler(CommandHandler("mute1hr", mute1hr))
 application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
+# Moved add_media_filter before setsolexawelcome_media to avoid conflict
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, add_media_filter))
+application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, setsolexawelcome_media))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
