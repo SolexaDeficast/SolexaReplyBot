@@ -399,16 +399,52 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         logger.error(f"Filter error: {e}")
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "Features:\n"
-        "- Keywords: audio/video/profits/etc → media files\n"
-        "- New members must solve captcha (toggle with /solexacaptcha ON|OFF)\n"
-        "- Custom welcome message after verification (set with /setsolexawelcome <message> or media, use {username})\n"
-        "- Admin commands: /ban, /kick, /mute10/30/1hr, /addsolexafilter, /unban, etc\n"
-        "- Use /addsolexafilter keyword [text] or send media with caption '/addsolexafilter keyword [text]'\n"
-        "- Supports *bold*, _italics_, [hyperlinks](https://example.com), and links\n"
-        "- Contact admin for help"
+        "*🚀 SOLEXA Bot Help Menu 🚀*\n"
+        "Here’s a detailed guide to all commands and features available in the bot\\. "
+        "Use these to manage your group effectively\\!\n\n"
+
+        "*⚙️ Admin Commands*\n"
+        "These commands are for group admins only\\.\n"
+        "• `/ban @username` or reply: Bans a user from the group\\.\n"
+        "• `/kick @username` or reply: Kicks a user \\(removes and allows rejoin\\)\\.\n"
+        "• `/mute10 @username` or reply: Mutes a user for 10 minutes\\.\n"
+        "• `/mute30 @username` or reply: Mutes a user for 30 minutes\\.\n"
+        "• `/mute1hr @username` or reply: Mutes a user for 1 hour\\.\n"
+        "• `/unban @username` or reply: Unbans a user\\.\n\n"
+
+        "*📝 Filters*\n"
+        "Add custom responses triggered by keywords\\.\n"
+        "• `/addsolexafilter keyword text`: Adds a text filter \\(admin\\-only\\)\\.\n"
+        "  Example: `/addsolexafilter hello Hi there!`\n"
+        "• `/addsolexafilter keyword [text]`: Adds a media filter \\(admin\\-only, send with media\\)\\.\n"
+        "  Example: Send a photo with caption `/addsolexafilter meme LOL` \\(text optional\\)\\.\n"
+        "• `/listsolexafilters`: Lists all filters in the group \\(admin\\-only\\)\\.\n"
+        "• `/removesolexafilter keyword`: Removes a filter \\(admin\\-only\\)\\.\n"
+        "• *Trigger Filters*: Send `keyword` or `/keyword` to trigger the response\\.\n\n"
+
+        "*🔒 Captcha*\n"
+        "Protect your group from bots with a captcha for new members\\.\n"
+        "• `/solexacaptcha ON|OFF|status`: Toggles or checks captcha status \\(admin\\-only, default: ON\\)\\.\n"
+        "  Example: `/solexacaptcha OFF` to disable\\.\n\n"
+
+        "*👋 Welcome Messages*\n"
+        "Set custom welcome messages for new members after captcha verification\\.\n"
+        "• `/setsolexawelcome <message>`: Sets a text welcome message \\(admin\\-only\\)\\.\n"
+        "  Use `{username}` to include the user’s name\\.\n"
+        "  Example: `/setsolexawelcome Welcome {username}!` \\.\n"
+        "• `/setsolexawelcome ON|OFF|status|preview`: Manages welcome message settings \\(admin\\-only\\)\\.\n"
+        "  Example: `/setsolexawelcome preview` to preview the message\\.\n"
+        "• `/setsolexawelcome` with media: Sets a media welcome message \\(admin\\-only, send with media\\)\\.\n"
+        "  Example: Send a photo with caption `/setsolexawelcome Welcome {username}!` \\.\n\n"
+
+        "*🎉 General Features*\n"
+        "• *Keyword Responses*: Predefined keywords like `profits`, `slut`, `launch cat` trigger media files\\.\n"
+        "• *Formatting Support*: Use `*bold*`, `_italics_`, `[links](https://example.com)` in messages\\.\n\n"
+
+        "*📧 Need Help?*\n"
+        "Contact the bot admin for assistance\\. Enjoy using SOLEXA Bot\\! 🎉"
     )
     escaped_help_text = escape_markdown_v2(help_text)
     await update.message.reply_text(escaped_help_text, parse_mode='MarkdownV2')
@@ -757,7 +793,7 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No permission ❌")
 
 # Handler registrations reordered to prioritize add_media_filter
-application.add_handler(CommandHandler("help", help_command))
+application.add_handler(CommandHandler("solexahelp", solexahelp_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("setsolexawelcome", setsolexawelcome_command))
 application.add_handler(CommandHandler("ban", ban_user))
