@@ -449,7 +449,7 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
         return
     chat_id = update.message.chat_id
     if chat_id not in welcome_state:
-        welcome_state[chat_id] = {"enabled": false, "type": None, "file_id": None, "text": "", "entities": [], "message_ids": []}
+        welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "entities": [], "message_ids": []}
 
     args = update.message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -763,7 +763,7 @@ application.add_handler(CommandHandler("mute30", mute30))
 application.add_handler(CommandHandler("mute1hr", mute1hr))
 application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
-application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE | filters.Document, add_media_filter))
+application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, add_media_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
