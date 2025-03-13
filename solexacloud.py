@@ -120,9 +120,9 @@ def save_welcome_state():
 def escape_markdown_v2(text):
     """
     Escape special characters for Telegram MarkdownV2, preserving * and _ for bold/italic.
-    Special characters to escape: ` > # + - = | { } . ! \ , except * and _
+    Special characters to escape: ` > # + - = | { } . ! ( ) \ , except * and _
     """
-    special_chars = r'([`>#+\-=|{}\.!\\,])'  # Exclude * and _ from escaping
+    special_chars = r'([`>#+\-=|{}\.!()\\,])'  # Include ( and ) for URL escaping, exclude * and _
     escaped_text = re.sub(special_chars, r'\\\1', text)
     logger.info(f"Raw MarkdownV2 text: {repr(text)}")
     logger.info(f"Escaped MarkdownV2 text: {repr(escaped_text)}")
@@ -400,6 +400,14 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
         logger.error(f"Filter error: {e}")
 
 async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Restrict to admins only
+    if update.message.chat.type == "private":
+        await update.message.reply_text("Group-only command ❌")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await update.message.reply_text("No permission ❌")
+        return
+
     help_text = (
         "*🚀 SOLEXA Bot Help Menu 🚀*\n"
         "Here’s a detailed guide to all commands and features available in the bot\\. "
@@ -441,7 +449,7 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         "*🎉 General Features*\n"
         "• *Keyword Responses*: Predefined keywords like `profits`, `slut`, `launch cat` trigger media files\\.\n"
-        "• *Formatting Support*: Use `*bold*`, `_italics_`, `[links](https://example.com)` in messages\\.\n\n"
+        "• *Formatting Support*: Use `*bold*`, `_italics_`, `[links](https://example\\.com)` in messages\\.\n\n"
 
         "*📧 Need Help?*\n"
         "Contact the bot admin for assistance\\. Enjoy using SOLEXA Bot\\! 🎉"
