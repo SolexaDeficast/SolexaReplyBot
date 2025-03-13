@@ -638,44 +638,76 @@ async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.caption or not update.message.caption.startswith('/addsolexafilter'):
+        logger.info("Message skipped: No caption or not starting with /addsolexafilter")
         return
-    if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-        chat_id = update.message.chat_id
-        caption = update.message.caption
-        args = caption.split(maxsplit=2)
-        if len(args) < 2:
-            await update.message.reply_text("Usage: Send media with caption '/addsolexafilter keyword [text]'")
+    logger.info(f"Processing media filter with caption: {update.message.caption}")
+    
+    if update.message.chat.type == "private":
+        await update.message.reply_text("Group-only command ❌")
+        return
+    chat_id = update.message.chat_id
+    try:
+        admins = await update.effective_chat.get_administrators()
+        if update.message.from_user.id not in [admin.user.id for admin in admins]:
+            await update.message.reply_text("No permission ❌")
+            logger.info(f"User {update.message.from_user.id} lacks admin permission")
             return
-        keyword = args[1].lower()
-        raw_text = args[2] if len(args) > 2 else ""
-        if chat_id not in filters_dict:
-            filters_dict[chat_id] = {}
+    except Exception as e:
+        logger.error(f"Error checking admin status: {e}")
+        await update.message.reply_text("Error checking permissions ❌")
+        return
+
+    caption = update.message.caption
+    args = caption.split(maxsplit=2)
+    logger.info(f"Caption split: {args}")
+    if len(args) < 2:
+        await update.message.reply_text("Usage: Send media with caption '/addsolexafilter keyword [text]'")
+        logger.info("Invalid caption format: Too few arguments")
+        return
+    keyword = args[1].lower()
+    raw_text = args[2] if len(args) > 2 else ""
+    logger.info(f"Keyword: {keyword}, Text: {raw_text}")
+
+    if chat_id not in filters_dict:
+        filters_dict[chat_id] = {}
+        logger.info(f"Initialized filters_dict for chat {chat_id}")
+
+    try:
         if update.message.photo:
             file_id = update.message.photo[-1].file_id
             filters_dict[chat_id][keyword] = {'type': 'photo', 'file_id': file_id, 'text': raw_text}
             await update.message.reply_text(f"Photo filter '{keyword}' added ✅")
+            logger.info(f"Added photo filter: {keyword}")
         elif update.message.video:
             file_id = update.message.video.file_id
             filters_dict[chat_id][keyword] = {'type': 'video', 'file_id': file_id, 'text': raw_text}
             await update.message.reply_text(f"Video filter '{keyword}' added ✅")
+            logger.info(f"Added video filter: {keyword}")
         elif update.message.audio:
             file_id = update.message.audio.file_id
             filters_dict[chat_id][keyword] = {'type': 'audio', 'file_id': file_id, 'text': raw_text}
             await update.message.reply_text(f"Audio filter '{keyword}' added ✅")
+            logger.info(f"Added audio filter: {keyword}")
         elif update.message.animation:
             file_id = update.message.animation.file_id
             filters_dict[chat_id][keyword] = {'type': 'animation', 'file_id': file_id, 'text': raw_text}
             await update.message.reply_text(f"GIF filter '{keyword}' added ✅")
+            logger.info(f"Added animation filter: {keyword}")
         elif update.message.voice:
             file_id = update.message.voice.file_id
             filters_dict[chat_id][keyword] = {'type': 'voice', 'file_id': file_id, 'text': raw_text}
             await update.message.reply_text(f"Voice filter '{keyword}' added ✅")
+            logger.info(f"Added voice filter: {keyword}")
         else:
             await update.message.reply_text("No supported media type detected")
+            logger.info("No supported media type found in message")
             return
+        
         save_filters()
-    else:
-        await update.message.reply_text("No permission ❌")
+        logger.info(f"Filters saved after adding {keyword}")
+    except Exception as e:
+        logger.error(f"Error adding media filter: {e}")
+        await update.message.reply_text("Error adding filter ❌")
 
 async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
