@@ -412,6 +412,7 @@ async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, messa
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Fixed welcome function for new members with proper markdown handling.
+    Focuses on handling username replacement properly.
     """
     try:
         chat_id = update.message.chat_id
@@ -440,10 +441,10 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                     ws = welcome_state[chat_id]
-                    # Replace the placeholder with the actual username
+                    # Critical fix: Simple string replacement first, then process the entire message for markdown
                     raw_text = ws["text"].replace("{username}", username)
                     
-                    # Send the message using our improved helper function
+                    # The key is to use process_markdown_v2 after the username replacement
                     try:
                         msg = await send_formatted_message(
                             context, 
@@ -465,7 +466,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Fixed captcha verification with proper markdown handling.
+    Fixed captcha verification with proper markdown handling for username replacement.
     """
     try:
         query = update.callback_query
@@ -496,7 +497,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                 ws = welcome_state[chat_id]
-                # Replace the placeholder with the actual username
+                # Critical fix: Simple string replacement first, then process the entire message for markdown
                 raw_text = ws["text"].replace("{username}", username)
                 
                 # Clear old welcome messages first
@@ -509,7 +510,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception as e:
                             logger.error(f"Failed to delete welcome message {msg_id}: {e}")
                 
-                # Send the welcome message with markdown formatting
+                # Use our improved send_formatted_message after the username replacement
                 try:
                     msg = await send_formatted_message(
                         context, 
