@@ -130,6 +130,63 @@ def escape_markdown_v2(text):
     logger.info(f"Escaped MarkdownV2 text: {repr(escaped_text)}")
     return escaped_text
 
+def parse_markdown_entities(text):
+    """
+    Parse MarkdownV2 text to extract entities (bold, italic, links, etc.).
+    Returns a list of MessageEntity objects.
+    """
+    entities = []
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if char == '*':  # Bold
+            start = i
+            i += 1
+            end = text.find('*', i)
+            if end == -1:
+                break
+            entities.append(MessageEntity(
+                type=MessageEntity.BOLD,
+                offset=start,
+                length=end - start + 1
+            ))
+            i = end + 1
+        elif char == '_':  # Italic
+            start = i
+            i += 1
+            end = text.find('_', i)
+            if end == -1:
+                break
+            entities.append(MessageEntity(
+                type=MessageEntity.ITALIC,
+                offset=start,
+                length=end - start + 1
+            ))
+            i = end + 1
+        elif char == '[':  # Link or text mention
+            start = i
+            i += 1
+            link_text_end = text.find(']', i)
+            if link_text_end == -1:
+                break
+            if text[link_text_end + 1:link_text_end + 2] == '(':
+                link_start = link_text_end + 2
+                link_end = text.find(')', link_start)
+                if link_end == -1:
+                    break
+                entities.append(MessageEntity(
+                    type=MessageEntity.TEXT_LINK,
+                    offset=start,
+                    length=link_text_end - start + 1,
+                    url=text[link_start:link_end]
+                ))
+                i = link_end + 1
+            else:
+                i = link_text_end + 1
+        else:
+            i += 1
+    return entities
+
 def adjust_entities(original_text, new_text, entities):
     """Adjust entity offsets after replacing {username} with a new username."""
     if not entities or "{username}" not in original_text:
@@ -146,11 +203,13 @@ def adjust_entities(original_text, new_text, entities):
         new_length = entity.length
         if username_start <= entity.offset < username_start + username_len:
             new_length += offset_diff
-        adjusted_entities.append(MessageEntity(
+        adjusted_entity = MessageEntity(
             type=entity.type,
             offset=new_offset,
-            length=new_length
-        ))
+            length=new_length,
+            url=entity.url if entity.type == MessageEntity.TEXT_LINK else None
+        )
+        adjusted_entities.append(adjusted_entity)
     return adjusted_entities
 
 def generate_captcha():
@@ -579,7 +638,8 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
                 logger.info(f"Fallback preview sent, message_id: {msg.message_id}")
     else:
         text = args[1]
-        welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text, "entities": update.message.parse_entities() if update.message.entities else [], "message_ids": []})
+        entities = parse_markdown_entities(text)  # Parse MarkdownV2 entities
+        welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text, "entities": entities, "message_ids": []})
         save_welcome_state()
         await update.message.reply_text("Welcome text set ✅")
 
@@ -675,15 +735,16 @@ async def handle_media_message(update: Update, context: ContextTypes.DEFAULT_TYP
             welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "entities": [], "message_ids": []}
 
         try:
+            entities = parse_markdown_entities(raw_caption)  # Parse MarkdownV2 entities
             if update.message.photo:
                 file_id = update.message.photo[-1].file_id
-                welcome_state[chat_id].update({"enabled": True, "type": "photo", "file_id": file_id, "text": raw_caption, "entities": update.message.parse_caption_entities() if update.message.caption_entities else [], "message_ids": []})
+                welcome_state[chat_id].update({"enabled": True, "type": "photo", "file_id": file_id, "text": raw_caption, "entities": entities, "message_ids": []})
             elif update.message.video:
                 file_id = update.message.video.file_id
-                welcome_state[chat_id].update({"enabled": True, "type": "video", "file_id": file_id, "text": raw_caption, "entities": update.message.parse_caption_entities() if update.message.caption_entities else [], "message_ids": []})
+                welcome_state[chat_id].update({"enabled": True, "type": "video", "file_id": file_id, "text": raw_caption, "entities": entities, "message_ids": []})
             elif update.message.animation:
                 file_id = update.message.animation.file_id
-                welcome_state[chat_id].update({"enabled": True, "type": "animation", "file_id": file_id, "text": raw_caption, "entities": update.message.parse_caption_entities() if update.message.caption_entities else [], "message_ids": []})
+                welcome_state[chat_id].update({"enabled": True, "type": "animation", "file_id": file_id, "text": raw_caption, "entities": entities, "message_ids": []})
             else:
                 await update.message.reply_text("Unsupported media type")
                 return
