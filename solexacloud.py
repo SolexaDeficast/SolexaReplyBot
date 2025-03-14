@@ -550,37 +550,117 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
         save_welcome_state()
         await update.message.reply_text("Welcome text set ✅")
 
-async def setsolexawelcome_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Entered setsolexawelcome_media for update: {update.message}")
-    if not update.message.caption or not update.message.caption.startswith('/setsolexawelcome'):
-        logger.info("Message skipped: No caption or not starting with /setsolexawelcome")
+async def handle_media_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Entered handle_media_message for update: {update.message}")
+    if not update.message.caption:
+        logger.info("Message skipped: No caption")
         return
+
     if update.message.chat.type == "private":
         await update.message.reply_text("Group-only command ❌")
         return
-    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-        await update.message.reply_text("No permission ❌")
-        return
     chat_id = update.message.chat_id
-    if chat_id not in welcome_state:
-        welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "entities": [], "message_ids": []}
-
-    args = update.message.caption.split(maxsplit=1)
-    raw_caption = args[1] if len(args) > 1 else ""
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-        welcome_state[chat_id].update({"enabled": True, "type": "photo", "file_id": file_id, "text": raw_caption, "entities": [], "message_ids": []})
-    elif update.message.video:
-        file_id = update.message.video.file_id
-        welcome_state[chat_id].update({"enabled": True, "type": "video", "file_id": file_id, "text": raw_caption, "entities": [], "message_ids": []})
-    elif update.message.animation:
-        file_id = update.message.animation.file_id
-        welcome_state[chat_id].update({"enabled": True, "type": "animation", "file_id": file_id, "text": raw_caption, "entities": [], "message_ids": []})
-    else:
-        await update.message.reply_text("Unsupported media type")
+    try:
+        admins = await update.effective_chat.get_administrators()
+        logger.info(f"Checking admin status for user {update.message.from_user.id}")
+        if update.message.from_user.id not in [admin.user.id for admin in admins]:
+            await update.message.reply_text("No permission ❌")
+            logger.info(f"User {update.message.from_user.id} lacks admin permission")
+            return
+    except Exception as e:
+        logger.error(f"Error checking admin status: {e}")
+        await update.message.reply_text("Error checking permissions ❌")
         return
-    save_welcome_state()
-    await update.message.reply_text(f"{welcome_state[chat_id]['type'].capitalize()} welcome set ✅")
+
+    caption = update.message.caption
+    if caption.startswith('/addsolexafilter'):
+        # Logic from add_media_filter
+        args = caption.split(maxsplit=2)
+        logger.info(f"Caption split: {args}")
+        if len(args) < 2:
+            await update.message.reply_text("Usage: Send media with caption '/addsolexafilter keyword [text]'")
+            logger.info("Invalid caption format: Too few arguments")
+            return
+        keyword = args[1].lower()
+        raw_text = args[2] if len(args) > 2 else ""
+        logger.info(f"Keyword: {keyword}, Text: {raw_text}")
+
+        if chat_id not in filters_dict:
+            filters_dict[chat_id] = {}
+            logger.info(f"Initialized filters_dict for chat {chat_id}")
+
+        try:
+            media_type = None
+            file_id = None
+            if update.message.photo:
+                media_type = 'photo'
+                file_id = update.message.photo[-1].file_id
+            elif update.message.video:
+                media_type = 'video'
+                file_id = update.message.video.file_id
+            elif update.message.audio:
+                media_type = 'audio'
+                file_id = update.message.audio.file_id
+            elif update.message.animation:
+                media_type = 'animation'
+                file_id = update.message.animation.file_id
+            elif update.message.voice:
+                media_type = 'voice'
+                file_id = update.message.voice.file_id
+            elif update.message.document:
+                mime_type = update.message.document.mime_type
+                if mime_type.startswith('video/'):
+                    media_type = 'video'
+                    file_id = update.message.document.file_id
+                elif mime_type.startswith('image/'):
+                    media_type = 'photo'
+                    file_id = update.message.document.file_id
+                elif mime_type.startswith('audio/'):
+                    media_type = 'audio'
+                    file_id = update.message.document.file_id
+
+            if media_type and file_id:
+                filters_dict[chat_id][keyword] = {'type': media_type, 'file_id': file_id, 'text': raw_text}
+                await update.message.reply_text(f"{media_type.capitalize()} filter '{keyword}' added ✅")
+                logger.info(f"Added {media_type} filter: {keyword}")
+            else:
+                await update.message.reply_text("No supported media type detected")
+                logger.info("No supported media type found in message")
+                return
+
+            save_filters()
+            logger.info(f"Filters saved after adding {keyword}")
+        except Exception as e:
+            logger.error(f"Error adding media filter: {e}")
+            await update.message.reply_text("Error adding filter ❌")
+
+    elif caption.startswith('/setsolexawelcome'):
+        # Logic from setsolexawelcome_media
+        args = caption.split(maxsplit=1)
+        raw_caption = args[1] if len(args) > 1 else ""
+        if chat_id not in welcome_state:
+            welcome_state[chat_id] = {"enabled": False, "type": None, "file_id": None, "text": "", "entities": [], "message_ids": []}
+
+        try:
+            if update.message.photo:
+                file_id = update.message.photo[-1].file_id
+                welcome_state[chat_id].update({"enabled": True, "type": "photo", "file_id": file_id, "text": raw_caption, "entities": [], "message_ids": []})
+            elif update.message.video:
+                file_id = update.message.video.file_id
+                welcome_state[chat_id].update({"enabled": True, "type": "video", "file_id": file_id, "text": raw_caption, "entities": [], "message_ids": []})
+            elif update.message.animation:
+                file_id = update.message.animation.file_id
+                welcome_state[chat_id].update({"enabled": True, "type": "animation", "file_id": file_id, "text": raw_caption, "entities": [], "message_ids": []})
+            else:
+                await update.message.reply_text("Unsupported media type")
+                return
+            save_welcome_state()
+            await update.message.reply_text(f"{welcome_state[chat_id]['type'].capitalize()} welcome set ✅")
+        except Exception as e:
+            logger.error(f"Error setting media welcome message: {e}")
+            await update.message.reply_text("Error setting welcome message ❌")
+    else:
+        logger.info("Message skipped: Caption does not start with /addsolexafilter or /setsolexawelcome")
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
@@ -682,88 +762,6 @@ async def add_text_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No permission ❌")
 
-async def add_media_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Entered add_media_filter for update: {update.message}")
-    if not update.message.caption or not update.message.caption.startswith('/addsolexafilter'):
-        logger.info("Message skipped: No caption or not starting with /addsolexafilter")
-        return
-
-    if update.message.chat.type == "private":
-        await update.message.reply_text("Group-only command ❌")
-        return
-    chat_id = update.message.chat_id
-    try:
-        admins = await update.effective_chat.get_administrators()
-        logger.info(f"Checking admin status for user {update.message.from_user.id}")
-        if update.message.from_user.id not in [admin.user.id for admin in admins]:
-            await update.message.reply_text("No permission ❌")
-            logger.info(f"User {update.message.from_user.id} lacks admin permission")
-            return
-    except Exception as e:
-        logger.error(f"Error checking admin status: {e}")
-        await update.message.reply_text("Error checking permissions ❌")
-        return
-
-    caption = update.message.caption
-    args = caption.split(maxsplit=2)
-    logger.info(f"Caption split: {args}")
-    if len(args) < 2:
-        await update.message.reply_text("Usage: Send media with caption '/addsolexafilter keyword [text]'")
-        logger.info("Invalid caption format: Too few arguments")
-        return
-    keyword = args[1].lower()
-    raw_text = args[2] if len(args) > 2 else ""
-    logger.info(f"Keyword: {keyword}, Text: {raw_text}")
-
-    if chat_id not in filters_dict:
-        filters_dict[chat_id] = {}
-        logger.info(f"Initialized filters_dict for chat {chat_id}")
-
-    try:
-        media_type = None
-        file_id = None
-        if update.message.photo:
-            media_type = 'photo'
-            file_id = update.message.photo[-1].file_id
-        elif update.message.video:
-            media_type = 'video'
-            file_id = update.message.video.file_id
-        elif update.message.audio:
-            media_type = 'audio'
-            file_id = update.message.audio.file_id
-        elif update.message.animation:
-            media_type = 'animation'
-            file_id = update.message.animation.file_id
-        elif update.message.voice:
-            media_type = 'voice'
-            file_id = update.message.voice.file_id
-        elif update.message.document:
-            mime_type = update.message.document.mime_type
-            if mime_type.startswith('video/'):
-                media_type = 'video'
-                file_id = update.message.document.file_id
-            elif mime_type.startswith('image/'):
-                media_type = 'photo'
-                file_id = update.message.document.file_id
-            elif mime_type.startswith('audio/'):
-                media_type = 'audio'
-                file_id = update.message.document.file_id
-
-        if media_type and file_id:
-            filters_dict[chat_id][keyword] = {'type': media_type, 'file_id': file_id, 'text': raw_text}
-            await update.message.reply_text(f"{media_type.capitalize()} filter '{keyword}' added ✅")
-            logger.info(f"Added {media_type} filter: {keyword}")
-        else:
-            await update.message.reply_text("No supported media type detected")
-            logger.info("No supported media type found in message")
-            return
-
-        save_filters()
-        logger.info(f"Filters saved after adding {keyword}")
-    except Exception as e:
-        logger.error(f"Error adding media filter: {e}")
-        await update.message.reply_text("Error adding filter ❌")
-
 async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
         chat_id = update.message.chat_id
@@ -800,7 +798,7 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No permission ❌")
 
-# Handler registrations reordered to prioritize add_media_filter
+# Handler registrations
 application.add_handler(CommandHandler("solexahelp", solexahelp_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("setsolexawelcome", setsolexawelcome_command))
@@ -811,9 +809,8 @@ application.add_handler(CommandHandler("mute30", mute30))
 application.add_handler(CommandHandler("mute1hr", mute1hr))
 application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
-# Moved add_media_filter before setsolexawelcome_media to avoid conflict
-application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, add_media_filter))
-application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, setsolexawelcome_media))
+# Combined handler for media messages
+application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, handle_media_message))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
