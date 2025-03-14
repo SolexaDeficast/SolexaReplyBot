@@ -145,169 +145,78 @@ def process_markdown_v2(text):
     if not text:
         return ""
     
-    # Process the text character by character to handle nested formatting
-    processed = ""
+    # These are all the characters that need escaping in MarkdownV2
+    special_chars = '_*[]()~`>#+-=|{}.!'
+    
+    # First pass: Escape all backslashes
+    processed = text.replace('\\', '\\\\')
+    
+    # Second pass: Handle formatting elements and escape other special characters
     i = 0
+    result = ""
     in_bold = False
     in_italic = False
     in_link_text = False
     in_link_url = False
-    link_text_buffer = ""
     
-    while i < len(text):
-        char = text[i]
+    while i < len(processed):
+        char = processed[i]
+        next_char = processed[i + 1] if i + 1 < len(processed) else None
         
-        # Check for bold markers
-        if char == '*' and (i == 0 or text[i-1] != '\\'):
-            processed += '*'
+        # Handle bold markers (asterisks)
+        if char == '*' and not in_link_text and not in_link_url:
+            result += '*'
             in_bold = not in_bold
             i += 1
             continue
-            
-        # Check for italic markers
-        elif char == '_' and (i == 0 or text[i-1] != '\\'):
-            processed += '_'
+        
+        # Handle italic markers (underscores)
+        elif char == '_' and not in_link_text and not in_link_url:
+            result += '_'
             in_italic = not in_italic
             i += 1
             continue
-            
-        # Check for link start
-        elif char == '[' and (i == 0 or text[i-1] != '\\') and not in_link_text:
+        
+        # Handle link start
+        elif char == '[' and not in_bold and not in_italic and not in_link_text and not in_link_url:
+            result += '['
             in_link_text = True
-            processed += '['
             i += 1
             continue
-            
-        # Check for link text end
-        elif char == ']' and (i == 0 or text[i-1] != '\\') and in_link_text:
+        
+        # Handle link text end
+        elif char == ']' and in_link_text:
+            result += ']'
             in_link_text = False
-            processed += ']'
-            
             # Check if followed by link URL
-            if i + 1 < len(text) and text[i+1] == '(':
-                processed += '('
+            if next_char == '(':
+                result += '('
                 in_link_url = True
-                i += 2
+                i += 2  # Skip the opening parenthesis
                 continue
             else:
                 i += 1
                 continue
-                
-        # Check for link URL end
-        elif char == ')' and (i == 0 or text[i-1] != '\\') and in_link_url:
+        
+        # Handle link URL end
+        elif char == ')' and in_link_url:
+            result += ')'
             in_link_url = False
-            processed += ')'
             i += 1
             continue
-            
+        
         # Handle regular characters
         else:
-            # If inside formatting, don't escape
-            if in_bold or in_italic or in_link_text or in_link_url:
-                processed += char
+            # Only escape special characters if we're not inside formatting
+            is_in_formatting = in_bold or in_italic or in_link_text or in_link_url
+            
+            if char in special_chars and not is_in_formatting:
+                result += '\\' + char
             else:
-                # Escape special characters
-                if char in '_*[]()~`>#+-=|{}.!':
-                    processed += '\\' + char
-                else:
-                    processed += char
+                result += char
             i += 1
     
-    return processed
-
-def parse_markdown_entities(text):
-    """
-    Parse text with Markdown formatting to extract proper MessageEntity objects.
-    """
-    if not text:
-        return []
-        
-    entities = []
-    
-    # Find all bold text (surrounded by asterisks)
-    i = 0
-    while i < len(text):
-        if text[i] == '*' and (i == 0 or text[i-1] != '\\'):
-            start = i
-            i += 1
-            # Find the closing asterisk
-            while i < len(text) and (text[i] != '*' or (text[i] == '*' and i > 0 and text[i-1] == '\\')):
-                i += 1
-                
-            if i < len(text):  # Found closing asterisk
-                entities.append(MessageEntity(
-                    type=MessageEntity.BOLD,
-                    offset=start,
-                    length=i - start + 1
-                ))
-                i += 1
-            else:
-                break
-        else:
-            i += 1
-    
-    # Find all italic text (surrounded by underscores)
-    i = 0
-    while i < len(text):
-        if text[i] == '_' and (i == 0 or text[i-1] != '\\'):
-            start = i
-            i += 1
-            # Find the closing underscore
-            while i < len(text) and (text[i] != '_' or (text[i] == '_' and i > 0 and text[i-1] == '\\')):
-                i += 1
-                
-            if i < len(text):  # Found closing underscore
-                entities.append(MessageEntity(
-                    type=MessageEntity.ITALIC,
-                    offset=start,
-                    length=i - start + 1
-                ))
-                i += 1
-            else:
-                break
-        else:
-            i += 1
-    
-    # Find all links [text](url)
-    i = 0
-    while i < len(text):
-        if text[i] == '[' and (i == 0 or text[i-1] != '\\'):
-            link_text_start = i
-            i += 1
-            # Find the closing bracket
-            while i < len(text) and (text[i] != ']' or (text[i] == ']' and i > 0 and text[i-1] == '\\')):
-                i += 1
-                
-            if i < len(text):  # Found closing bracket
-                i += 1  # Move past the closing bracket
-                
-                # Check for opening parenthesis
-                if i < len(text) and text[i] == '(':
-                    i += 1  # Move past the opening parenthesis
-                    url_start = i
-                    
-                    # Find the closing parenthesis
-                    while i < len(text) and (text[i] != ')' or (text[i] == ')' and i > 0 and text[i-1] == '\\')):
-                        i += 1
-                        
-                    if i < len(text):  # Found closing parenthesis
-                        url = text[url_start:i]
-                        entities.append(MessageEntity(
-                            type=MessageEntity.TEXT_LINK,
-                            offset=link_text_start,
-                            length=i + 1 - link_text_start,
-                            url=url
-                        ))
-                        i += 1
-                    else:
-                        break
-            else:
-                break
-        else:
-            i += 1
-    
-    return entities
-
+    return result
 async def send_formatted_message(context, chat_id, text, message_type="text", file_id=None):
     """
     Send a message with MarkdownV2 formatting, with fallback to plain text.
@@ -346,6 +255,64 @@ async def send_formatted_message(context, chat_id, text, message_type="text", fi
             return await context.bot.send_audio(chat_id, file_id, caption=text, parse_mode=None)
         elif message_type == "voice":
             return await context.bot.send_voice(chat_id, file_id, caption=text, parse_mode=None)
+
+async def send_welcome_message(context, chat_id, welcome_config, username):
+    """
+    Specialized function just for sending welcome messages with username substitution.
+    This approach completely separates username substitution from the markdown processing.
+    """
+    try:
+        # Get the type and file_id from the welcome config
+        message_type = welcome_config.get("type", "text")
+        file_id = welcome_config.get("file_id")
+        
+        # Get the raw text and do the username substitution
+        raw_text = welcome_config.get("text", "")
+        text_with_username = raw_text.replace("{username}", username)
+        
+        # Log the transformation
+        logger.info(f"Original welcome text: {raw_text}")
+        logger.info(f"After username replacement: {text_with_username}")
+        
+        # Use a direct approach based on message type
+        try:
+            formatted_text = process_markdown_v2(text_with_username)
+            logger.info(f"Formatted for MarkdownV2: {formatted_text}")
+            
+            # Send with MarkdownV2
+            if message_type == "text":
+                return await context.bot.send_message(chat_id, formatted_text, parse_mode='MarkdownV2')
+            elif message_type == "photo":
+                return await context.bot.send_photo(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2')
+            elif message_type == "video":
+                return await context.bot.send_video(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2')
+            elif message_type == "animation":
+                return await context.bot.send_animation(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2')
+            else:
+                # Default fallback
+                return await context.bot.send_message(chat_id, formatted_text, parse_mode='MarkdownV2')
+                
+        except Exception as e:
+            logger.error(f"Error sending welcome with MarkdownV2: {e}")
+            logger.info("Falling back to plain text...")
+            
+            # Fallback to plain text
+            if message_type == "text":
+                return await context.bot.send_message(chat_id, text_with_username)
+            elif message_type == "photo":
+                return await context.bot.send_photo(chat_id, file_id, caption=text_with_username)
+            elif message_type == "video":
+                return await context.bot.send_video(chat_id, file_id, caption=text_with_username)
+            elif message_type == "animation":
+                return await context.bot.send_animation(chat_id, file_id, caption=text_with_username)
+            else:
+                # Default fallback
+                return await context.bot.send_message(chat_id, text_with_username)
+                
+    except Exception as e:
+        logger.error(f"Failed to send welcome message: {e}")
+        return None
+
 def adjust_entities(original_text, new_text, entities):
     """Adjust entity offsets after replacing {username} with a new username."""
     if not entities or "{username}" not in original_text:
@@ -408,11 +375,9 @@ async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, messa
         logger.info(f"Deleted message {message_id} in chat {chat_id}")
     except Exception as e:
         logger.error(f"Failed to delete message {message_id}: {e}")
-
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Fixed welcome function for new members with proper markdown handling.
-    Focuses on handling username replacement properly.
+    Updated welcome function using the specialized welcome message sender.
     """
     try:
         chat_id = update.message.chat_id
@@ -440,33 +405,20 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await context.bot.send_message(chat_id=chat_id, text=f"Welcome {username}! Please verify yourself.\n\n{question}", reply_markup=reply_markup)
             else:
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
-                    ws = welcome_state[chat_id]
-                    # Critical fix: Simple string replacement first, then process the entire message for markdown
-                    raw_text = ws["text"].replace("{username}", username)
+                    # Use our specialized welcome message function
+                    msg = await send_welcome_message(context, chat_id, welcome_state[chat_id], username)
                     
-                    # The key is to use process_markdown_v2 after the username replacement
-                    try:
-                        msg = await send_formatted_message(
-                            context, 
-                            chat_id,
-                            raw_text,
-                            message_type=ws["type"],
-                            file_id=ws.get("file_id")
-                        )
-                        
-                        # Store the message ID for later deletion
-                        if msg:
-                            welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
-                            save_welcome_state()
-                            logger.info(f"Welcome message sent successfully, message_id: {msg.message_id}")
-                    except Exception as e:
-                        logger.error(f"Failed to send welcome message: {e}")
+                    # Store the message ID for later deletion if needed
+                    if msg:
+                        welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
+                        save_welcome_state()
+                        logger.info(f"Welcome message sent successfully, message_id: {msg.message_id}")
     except Exception as e:
         logger.error(f"Error handling new member: {e}")
 
 async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Fixed captcha verification with proper markdown handling for username replacement.
+    Updated captcha verification using the specialized welcome message sender.
     """
     try:
         query = update.callback_query
@@ -496,10 +448,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.delete()
 
             if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
-                ws = welcome_state[chat_id]
-                # Critical fix: Simple string replacement first, then process the entire message for markdown
-                raw_text = ws["text"].replace("{username}", username)
-                
                 # Clear old welcome messages first
                 if "message_ids" in welcome_state[chat_id]:
                     for msg_id in welcome_state[chat_id]["message_ids"][:]:
@@ -510,23 +458,14 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception as e:
                             logger.error(f"Failed to delete welcome message {msg_id}: {e}")
                 
-                # Use our improved send_formatted_message after the username replacement
-                try:
-                    msg = await send_formatted_message(
-                        context, 
-                        chat_id,
-                        raw_text,
-                        message_type=ws["type"],
-                        file_id=ws.get("file_id")
-                    )
-                    
-                    # Store the message ID for later deletion
-                    if msg:
-                        welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
-                        save_welcome_state()
-                        logger.info(f"Welcome message sent successfully, message_id: {msg.message_id}")
-                except Exception as e:
-                    logger.error(f"Failed to send welcome message: {e}")
+                # Use our specialized welcome message function
+                msg = await send_welcome_message(context, chat_id, welcome_state[chat_id], username)
+                
+                # Store the message ID for later deletion if needed
+                if msg:
+                    welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
+                    save_welcome_state()
+                    logger.info(f"Welcome message sent successfully, message_id: {msg.message_id}")
             else:
                 msg = await context.bot.send_message(chat_id, "✅ Verified!")
                 context.job_queue.run_once(lambda x: delete_message(x, chat_id, msg.message_id), 10)
@@ -700,6 +639,33 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Send the help message with proper formatting
     await send_formatted_message(context, update.effective_chat.id, help_text)
 
+async def solexacaptcha_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type == "private":
+        await update.message.reply_text("Group-only command ❌")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await update.message.reply_text("No permission ❌")
+        return
+    chat_id = update.message.chat_id
+    if not context.args:
+        await update.message.reply_text("Usage: /solexacaptcha ON|OFF|status")
+        return
+    action = context.args[0].upper()
+    if action == "ON":
+        captcha_enabled[chat_id] = True
+        save_captcha_state()
+        await update.message.reply_text("Captcha enabled ✅")
+    elif action == "OFF":
+        captcha_enabled[chat_id] = False
+        save_captcha_state()
+        await update.message.reply_text("Captcha disabled ✅")
+    elif action == "STATUS":
+        state = captcha_enabled.get(chat_id, True)
+        status_text = "enabled" if state else "disabled"
+        await update.message.reply_text(f"Captcha is currently {status_text}")
+    else:
+        await update.message.reply_text("Usage: /solexacaptcha ON|OFF|status")
+
 async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == "private":
         await update.message.reply_text("Group-only command ❌")
@@ -737,14 +703,13 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
             ws = welcome_state[chat_id]
             text = ws["text"].replace("{username}", update.message.from_user.username or update.message.from_user.first_name)
             
-            # Send preview with proper formatting
+            # Use specialized welcome message function for preview
             try:
-                msg = await send_formatted_message(
+                msg = await send_welcome_message(
                     context,
                     chat_id,
-                    text,
-                    message_type=ws["type"],
-                    file_id=ws.get("file_id")
+                    welcome_state[chat_id],
+                    update.message.from_user.username or update.message.from_user.first_name
                 )
                 logger.info(f"Preview sent successfully, message_id: {msg.message_id}")
             except Exception as e:
@@ -755,7 +720,6 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
         welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text, "entities": entities, "message_ids": []})
         save_welcome_state()
         await update.message.reply_text("Welcome text set ✅")
-
 async def handle_media_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Fixed media message handler for setting filters and welcome messages.
@@ -871,32 +835,6 @@ async def handle_media_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("Error setting welcome message ❌")
     else:
         logger.info("Message skipped: Caption does not start with /addsolexafilter or /setsolexawelcome")
-async def solexacaptcha_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type == "private":
-        await update.message.reply_text("Group-only command ❌")
-        return
-    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-        await update.message.reply_text("No permission ❌")
-        return
-    chat_id = update.message.chat_id
-    if not context.args:
-        await update.message.reply_text("Usage: /solexacaptcha ON|OFF|status")
-        return
-    action = context.args[0].upper()
-    if action == "ON":
-        captcha_enabled[chat_id] = True
-        save_captcha_state()
-        await update.message.reply_text("Captcha enabled ✅")
-    elif action == "OFF":
-        captcha_enabled[chat_id] = False
-        save_captcha_state()
-        await update.message.reply_text("Captcha disabled ✅")
-    elif action == "STATUS":
-        state = captcha_enabled.get(chat_id, True)
-        status_text = "enabled" if state else "disabled"
-        await update.message.reply_text(f"Captcha is currently {status_text}")
-    else:
-        await update.message.reply_text("Usage: /solexacaptcha ON|OFF|status")
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
@@ -934,7 +872,6 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Usage: /kick @username or reply to a user")
     else:
         await update.message.reply_text("No permission ❌")
-
 async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration: timedelta):
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
         try:
@@ -1034,6 +971,48 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No permission ❌")
 
+# Add a diagnostic command for welcome messages
+async def solexafixwelcome_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Command to diagnose and fix formatting issues in welcome messages.
+    Admin-only command that will clean up existing welcome messages.
+    """
+    if update.message.chat.type == "private":
+        await update.message.reply_text("Group-only command ❌")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await update.message.reply_text("No permission ❌")
+        return
+        
+    chat_id = update.message.chat_id
+    if chat_id not in welcome_state or not welcome_state[chat_id]["enabled"]:
+        await update.message.reply_text("No welcome message is currently set.")
+        return
+        
+    # Get the current welcome message info
+    ws = welcome_state[chat_id]
+    
+    # Show diagnostic info about the current welcome message
+    await update.message.reply_text(
+        f"Welcome message diagnostic info:\n"
+        f"- Type: {ws['type']}\n"
+        f"- Raw text: {ws['text']}\n"
+        f"- Has entities: {'Yes' if ws.get('entities') else 'No'}\n"
+        f"- Num entities: {len(ws.get('entities', []))}"
+    )
+    
+    # Try to fix the welcome message
+    original_text = ws["text"]
+    username = update.message.from_user.username or update.message.from_user.first_name
+    
+    # Show preview of how it would look with this username
+    sample_text = original_text.replace("{username}", username)
+    await update.message.reply_text(f"Raw sample with your username:\n{sample_text}")
+    
+    # Show how the processed markdown would look
+    processed_text = process_markdown_v2(sample_text)
+    await update.message.reply_text(f"Processed markdown: \n{processed_text}")
+
 # Handler registrations
 application.add_handler(CommandHandler("solexahelp", solexahelp_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
@@ -1045,6 +1024,7 @@ application.add_handler(CommandHandler("mute30", mute30))
 application.add_handler(CommandHandler("mute1hr", mute1hr))
 application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
+application.add_handler(CommandHandler("solexafixwelcome", solexafixwelcome_command))  # Add the diagnostic command
 # Combined handler for media messages
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, handle_media_message))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
