@@ -1177,7 +1177,26 @@ application.add_handler(CommandHandler("solexafixwelcome", solexafixwelcome_comm
 
 # System message handler should be before NEW_CHAT_MEMBERS
 application.add_handler(MessageHandler(
-    filters.StatusUpdate.ALL_TYPES & ~filters.StatusUpdate.NEW_CHAT_MEMBERS, 
+    (filters.StatusUpdate.LEFT_CHAT_MEMBER | 
+     filters.StatusUpdate.NEW_CHAT_TITLE | 
+     filters.StatusUpdate.NEW_CHAT_PHOTO | 
+     filters.StatusUpdate.DELETE_CHAT_PHOTO | 
+     filters.StatusUpdate.GROUP_CHAT_CREATED | 
+     filters.StatusUpdate.SUPERGROUP_CHAT_CREATED | 
+     filters.StatusUpdate.CHANNEL_CHAT_CREATED | 
+     filters.StatusUpdate.MESSAGE_AUTO_DELETE_TIMER_CHANGED | 
+     filters.StatusUpdate.MIGRATE_TO_CHAT_ID | 
+     filters.StatusUpdate.MIGRATE_FROM_CHAT_ID | 
+     filters.StatusUpdate.PINNED_MESSAGE | 
+     filters.StatusUpdate.PROXIMITY_ALERT_TRIGGERED | 
+     filters.StatusUpdate.VIDEO_CHAT_SCHEDULED | 
+     filters.StatusUpdate.VIDEO_CHAT_STARTED | 
+     filters.StatusUpdate.VIDEO_CHAT_ENDED | 
+     filters.StatusUpdate.VIDEO_CHAT_PARTICIPANTS_INVITED | 
+     filters.StatusUpdate.FORUM_TOPIC_CREATED | 
+     filters.StatusUpdate.FORUM_TOPIC_EDITED | 
+     filters.StatusUpdate.FORUM_TOPIC_CLOSED | 
+     filters.StatusUpdate.FORUM_TOPIC_REOPENED), 
     handle_system_messages
 ))
 
