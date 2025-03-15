@@ -457,63 +457,34 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_system_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handler to detect and delete system messages about users joining, leaving, etc.
+    Simple handler for system messages (focusing on leave messages first).
     """
     try:
-        # Skip if not a system message or if we don't have the chat_id
+        # Skip if no message or if in a private chat
         if not update.message or update.message.chat.type == "private":
+            return
+            
+        # Skip if this is a regular text message (not a system message)
+        if update.message.text:
             return
             
         chat_id = update.message.chat_id
         
-        # Check if system message cleaning is enabled for this chat
+        # Check if system message cleaning is enabled
         if chat_id not in cleansystem_enabled or not cleansystem_enabled[chat_id]:
             return
-            
-        # Check for various types of system messages
-        is_system_message = False
         
-        # New chat members are handled separately in welcome_new_member
-        if update.message.new_chat_members:
-            # Delete the system message, but let our welcome_new_member handle the rest
-            is_system_message = True
-            
-        # Left chat member
-        elif update.message.left_chat_member:
-            is_system_message = True
-            
-        # Other system updates
-        elif update.message.new_chat_title or \
-             update.message.new_chat_photo or \
-             update.message.delete_chat_photo or \
-             update.message.group_chat_created or \
-             update.message.supergroup_chat_created or \
-             update.message.channel_chat_created or \
-             update.message.message_auto_delete_timer_changed or \
-             update.message.migrate_to_chat_id or \
-             update.message.migrate_from_chat_id or \
-             update.message.pinned_message or \
-             update.message.proximity_alert_triggered or \
-             update.message.video_chat_scheduled or \
-             update.message.video_chat_started or \
-             update.message.video_chat_ended or \
-             update.message.video_chat_participants_invited or \
-             update.message.forum_topic_created or \
-             update.message.forum_topic_edited or \
-             update.message.forum_topic_closed or \
-             update.message.forum_topic_reopened:
-            is_system_message = True
-            
-        # If it's a system message, delete it
-        if is_system_message:
+        # Check if this is a "user left" message
+        if hasattr(update.message, "left_chat_member") and update.message.left_chat_member:
+            # Try to delete it
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
-                logger.info(f"Deleted system message {update.message.message_id} in chat {chat_id}")
+                logger.info(f"Deleted 'user left' message in chat {chat_id}")
             except Exception as e:
-                logger.error(f"Failed to delete system message {update.message.message_id}: {e}")
+                logger.error(f"Failed to delete message: {e}")
+                
     except Exception as e:
-        logger.error(f"Error handling system message: {e}")
-
+        logger.error(f"Error in handle_system_messages: {e}")
 async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Updated captcha verification using the specialized welcome message sender.
@@ -974,7 +945,6 @@ async def handle_media_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("Error setting welcome message ❌")
     else:
         logger.info("Message skipped: Caption does not start with /addsolexafilter or /setsolexawelcome")
-
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
         try:
@@ -1175,30 +1145,8 @@ application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
 application.add_handler(CommandHandler("solexafixwelcome", solexafixwelcome_command))  # Add the diagnostic command
 
-# System message handler should be before NEW_CHAT_MEMBERS
-application.add_handler(MessageHandler(
-    (filters.StatusUpdate.LEFT_CHAT_MEMBER | 
-     filters.StatusUpdate.NEW_CHAT_TITLE | 
-     filters.StatusUpdate.NEW_CHAT_PHOTO | 
-     filters.StatusUpdate.DELETE_CHAT_PHOTO | 
-     filters.StatusUpdate.GROUP_CHAT_CREATED | 
-     filters.StatusUpdate.SUPERGROUP_CHAT_CREATED | 
-     filters.StatusUpdate.CHANNEL_CHAT_CREATED | 
-     filters.StatusUpdate.MESSAGE_AUTO_DELETE_TIMER_CHANGED | 
-     filters.StatusUpdate.MIGRATE_TO_CHAT_ID | 
-     filters.StatusUpdate.MIGRATE_FROM_CHAT_ID | 
-     filters.StatusUpdate.PINNED_MESSAGE | 
-     filters.StatusUpdate.PROXIMITY_ALERT_TRIGGERED | 
-     filters.StatusUpdate.VIDEO_CHAT_SCHEDULED | 
-     filters.StatusUpdate.VIDEO_CHAT_STARTED | 
-     filters.StatusUpdate.VIDEO_CHAT_ENDED | 
-     filters.StatusUpdate.VIDEO_CHAT_PARTICIPANTS_INVITED | 
-     filters.StatusUpdate.FORUM_TOPIC_CREATED | 
-     filters.StatusUpdate.FORUM_TOPIC_EDITED | 
-     filters.StatusUpdate.FORUM_TOPIC_CLOSED | 
-     filters.StatusUpdate.FORUM_TOPIC_REOPENED), 
-    handle_system_messages
-))
+# Basic handler for all messages to catch system messages
+application.add_handler(MessageHandler(filters.ALL, handle_system_messages))
 
 # Combined handler for media messages
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, handle_media_message))
