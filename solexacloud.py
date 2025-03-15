@@ -31,6 +31,8 @@ CAPTCHA_STATE_FILE = "/data/captcha_state.json"
 captcha_enabled = {}
 WELCOME_STATE_FILE = "/data/welcome_state.json"
 welcome_state = {}
+CLEANSYSTEM_STATE_FILE = "/data/cleansystem_state.json"
+cleansystem_enabled = {}
 
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
@@ -116,6 +118,28 @@ def save_welcome_state():
         logger.info(f"Welcome state saved: {repr(welcome_state)}")
     except Exception as e:
         logger.error(f"Error saving welcome state: {e}")
+
+def load_cleansystem_state():
+    global cleansystem_enabled
+    try:
+        if os.path.exists(CLEANSYSTEM_STATE_FILE):
+            with open(CLEANSYSTEM_STATE_FILE, 'r') as f:
+                data = json.load(f)
+                cleansystem_enabled = {int(chat_id): bool(state) for chat_id, state in data.items()}
+        else:
+            cleansystem_enabled = {}
+        logger.info(f"Clean system state loaded: {repr(cleansystem_enabled)}")
+    except Exception as e:
+        logger.error(f"Error loading clean system state: {e}")
+        cleansystem_enabled = {}
+
+def save_cleansystem_state():
+    try:
+        with open(CLEANSYSTEM_STATE_FILE, 'w') as f:
+            json.dump({str(chat_id): state for chat_id, state in cleansystem_enabled.items()}, f)
+        logger.info(f"Clean system state saved: {repr(cleansystem_enabled)}")
+    except Exception as e:
+        logger.error(f"Error saving clean system state: {e}")
 
 def escape_markdown_v2(text):
     """
@@ -217,6 +241,7 @@ def process_markdown_v2(text):
             i += 1
     
     return result
+
 async def send_formatted_message(context, chat_id, text, message_type="text", file_id=None):
     """
     Send a message with MarkdownV2 formatting, with fallback to plain text.
@@ -375,12 +400,26 @@ async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, messa
         logger.info(f"Deleted message {message_id} in chat {chat_id}")
     except Exception as e:
         logger.error(f"Failed to delete message {message_id}: {e}")
+
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Updated welcome function using the specialized welcome message sender.
+    Updated welcome function to also clean system messages if enabled.
     """
     try:
         chat_id = update.message.chat_id
+        
+        # Check if system message cleaning is enabled
+        clean_system = chat_id in cleansystem_enabled and cleansystem_enabled[chat_id]
+        
+        # If system message cleaning is enabled, delete the system message
+        if clean_system:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
+                logger.info(f"Deleted system message {update.message.message_id} in chat {chat_id}")
+            except Exception as e:
+                logger.error(f"Failed to delete system message {update.message.message_id}: {e}")
+        
+        # Continue with the existing welcome logic
         if chat_id not in captcha_enabled:
             captcha_enabled[chat_id] = True
             save_captcha_state()
@@ -415,6 +454,65 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         logger.info(f"Welcome message sent successfully, message_id: {msg.message_id}")
     except Exception as e:
         logger.error(f"Error handling new member: {e}")
+
+async def handle_system_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handler to detect and delete system messages about users joining, leaving, etc.
+    """
+    try:
+        # Skip if not a system message or if we don't have the chat_id
+        if not update.message or update.message.chat.type == "private":
+            return
+            
+        chat_id = update.message.chat_id
+        
+        # Check if system message cleaning is enabled for this chat
+        if chat_id not in cleansystem_enabled or not cleansystem_enabled[chat_id]:
+            return
+            
+        # Check for various types of system messages
+        is_system_message = False
+        
+        # New chat members are handled separately in welcome_new_member
+        if update.message.new_chat_members:
+            # Delete the system message, but let our welcome_new_member handle the rest
+            is_system_message = True
+            
+        # Left chat member
+        elif update.message.left_chat_member:
+            is_system_message = True
+            
+        # Other system updates
+        elif update.message.new_chat_title or \
+             update.message.new_chat_photo or \
+             update.message.delete_chat_photo or \
+             update.message.group_chat_created or \
+             update.message.supergroup_chat_created or \
+             update.message.channel_chat_created or \
+             update.message.message_auto_delete_timer_changed or \
+             update.message.migrate_to_chat_id or \
+             update.message.migrate_from_chat_id or \
+             update.message.pinned_message or \
+             update.message.proximity_alert_triggered or \
+             update.message.video_chat_scheduled or \
+             update.message.video_chat_started or \
+             update.message.video_chat_ended or \
+             update.message.video_chat_participants_invited or \
+             update.message.forum_topic_created or \
+             update.message.forum_topic_edited or \
+             update.message.forum_topic_closed or \
+             update.message.forum_topic_reopened:
+            is_system_message = True
+            
+        # If it's a system message, delete it
+        if is_system_message:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
+                logger.info(f"Deleted system message {update.message.message_id} in chat {chat_id}")
+            except Exception as e:
+                logger.error(f"Failed to delete system message {update.message.message_id}: {e}")
+    except Exception as e:
+        logger.error(f"Error handling system message: {e}")
 
 async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -577,9 +675,42 @@ async def handle_command_as_filter(update: Update, context: ContextTypes.DEFAULT
                     return
     except Exception as e:
         logger.error(f"Filter error: {e}")
+
+async def cleansystem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Command to toggle automatic deletion of system messages.
+    Usage: /cleansystem ON|OFF|STATUS
+    """
+    if update.message.chat.type == "private":
+        await update.message.reply_text("Group-only command ❌")
+if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await update.message.reply_text("No permission ❌")
+        return
+    
+    chat_id = update.message.chat_id
+    if not context.args:
+        await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
+        return
+    
+    action = context.args[0].upper()
+    if action == "ON":
+        cleansystem_enabled[chat_id] = True
+        save_cleansystem_state()
+        await update.message.reply_text("System message cleaning enabled ✅")
+    elif action == "OFF":
+        cleansystem_enabled[chat_id] = False
+        save_cleansystem_state()
+        await update.message.reply_text("System message cleaning disabled ✅")
+    elif action == "STATUS":
+        state = cleansystem_enabled.get(chat_id, False)
+        status_text = "enabled" if state else "disabled"
+        await update.message.reply_text(f"System message cleaning is currently {status_text}")
+    else:
+        await update.message.reply_text("Usage: /cleansystem ON|OFF|STATUS")
+
 async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Fixed help command with proper markdown formatting.
+    Updated help command with proper markdown formatting.
     """
     # Restrict to admins only
     if update.message.chat.type == "private":
@@ -601,7 +732,8 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "• `/mute10 @username` or reply: Mutes a user for 10 minutes.\n"
         "• `/mute30 @username` or reply: Mutes a user for 30 minutes.\n"
         "• `/mute1hr @username` or reply: Mutes a user for 1 hour.\n"
-        "• `/unban @username` or reply: Unbans a user.\n\n"
+        "• `/unban @username` or reply: Unbans a user.\n"
+        "• `/cleansystem ON|OFF|STATUS`: Toggles automatic deletion of system messages (join/leave/etc).\n\n"
 
         "*📝 Filters*\n"
         "Add custom responses triggered by keywords.\n"
@@ -627,6 +759,11 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "  Example: `/setsolexawelcome preview` to preview the message.\n"
         "• `/setsolexawelcome` with media: Sets a media welcome message (admin-only, send with media).\n"
         "  Example: Send a photo with caption `/setsolexawelcome Welcome {username}!`.\n\n"
+
+        "*🧹 System Message Cleaning*\n"
+        "Automatically delete system messages about users joining, leaving, etc.\n"
+        "• `/cleansystem ON|OFF|STATUS`: Toggles or checks system message cleaning status (admin-only, default: OFF).\n"
+        "  Example: `/cleansystem ON` to enable automatic cleaning.\n\n"
 
         "*🎉 General Features*\n"
         "• *Keyword Responses*: Predefined keywords like `profits`, `slut`, `launch cat` trigger media files.\n"
@@ -873,6 +1010,7 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Usage: /kick @username or reply to a user")
     else:
         await update.message.reply_text("No permission ❌")
+
 async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration: timedelta):
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
         try:
@@ -1014,10 +1152,19 @@ async def solexafixwelcome_command(update: Update, context: ContextTypes.DEFAULT
     processed_text = process_markdown_v2(sample_text)
     await update.message.reply_text(f"Processed markdown: \n{processed_text}")
 
+def parse_markdown_entities(text):
+    """
+    Function to maintain compatibility with existing code.
+    """
+    # This is a placeholder to maintain compatibility
+    # In the original code, this function might have been defined but not included in the snippet
+    return []
+
 # Handler registrations
 application.add_handler(CommandHandler("solexahelp", solexahelp_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("setsolexawelcome", setsolexawelcome_command))
+application.add_handler(CommandHandler("cleansystem", cleansystem_command))
 application.add_handler(CommandHandler("ban", ban_user))
 application.add_handler(CommandHandler("kick", kick_user))
 application.add_handler(CommandHandler("mute10", mute10))
@@ -1026,6 +1173,13 @@ application.add_handler(CommandHandler("mute1hr", mute1hr))
 application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
 application.add_handler(CommandHandler("solexafixwelcome", solexafixwelcome_command))  # Add the diagnostic command
+
+# System message handler should be before NEW_CHAT_MEMBERS
+application.add_handler(MessageHandler(
+    filters.StatusUpdate.ALL_TYPES & ~filters.StatusUpdate.NEW_CHAT_MEMBERS, 
+    handle_system_messages
+))
+
 # Combined handler for media messages
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, handle_media_message))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
@@ -1048,6 +1202,7 @@ async def startup():
     load_filters()
     load_captcha_state()
     load_welcome_state()
+    load_cleansystem_state()  # Added this line to load system message cleaning state
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
