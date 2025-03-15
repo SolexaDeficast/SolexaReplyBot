@@ -241,7 +241,6 @@ def process_markdown_v2(text):
             i += 1
     
     return result
-
 async def send_formatted_message(context, chat_id, text, message_type="text", file_id=None):
     """
     Send a message with MarkdownV2 formatting, with fallback to plain text.
@@ -457,15 +456,11 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_system_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Simple handler for system messages (focusing on leave messages first).
+    Improved handler for system messages - detects more types and won't interfere with other features.
     """
     try:
         # Skip if no message or if in a private chat
         if not update.message or update.message.chat.type == "private":
-            return
-            
-        # Skip if this is a regular text message (not a system message)
-        if update.message.text:
             return
             
         chat_id = update.message.chat_id
@@ -474,17 +469,56 @@ async def handle_system_messages(update: Update, context: ContextTypes.DEFAULT_T
         if chat_id not in cleansystem_enabled or not cleansystem_enabled[chat_id]:
             return
         
-        # Check if this is a "user left" message
+        # Skip if it's a text message or command (these are handled by other handlers)
+        if update.message.text or update.message.caption:
+            return
+            
+        # Skip if it has media (handled by other handlers)
+        if update.message.photo or update.message.video or update.message.animation or update.message.document:
+            return
+        
+        # Check if this is a system message
+        is_system_message = False
+        
+        # Skip if it's a new member message (welcome_new_member handles these)
+        if hasattr(update.message, "new_chat_members") and update.message.new_chat_members:
+            # This is handled by welcome_new_member, so skip
+            return
+            
+        # Check for left chat member
         if hasattr(update.message, "left_chat_member") and update.message.left_chat_member:
-            # Try to delete it
+            is_system_message = True
+            
+        # Check for other system message types
+        if (hasattr(update.message, "new_chat_title") and update.message.new_chat_title) or \
+           (hasattr(update.message, "new_chat_photo") and update.message.new_chat_photo) or \
+           (hasattr(update.message, "delete_chat_photo") and update.message.delete_chat_photo) or \
+           (hasattr(update.message, "pinned_message") and update.message.pinned_message):
+            is_system_message = True
+            
+        # Any other message without text/caption and without media is likely a system message
+        # (like "User added User" or "User joined via invite link")
+        if not update.message.text and not update.message.caption:
+            if not update.message.photo and \
+               not update.message.video and \
+               not update.message.audio and \
+               not update.message.voice and \
+               not update.message.document and \
+               not update.message.sticker and \
+               not update.message.animation:
+                is_system_message = True
+            
+        # If it's a system message, delete it
+        if is_system_message:
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
-                logger.info(f"Deleted 'user left' message in chat {chat_id}")
+                logger.info(f"Deleted system message {update.message.message_id} in chat {chat_id}")
             except Exception as e:
-                logger.error(f"Failed to delete message: {e}")
+                logger.error(f"Failed to delete system message: {e}")
                 
     except Exception as e:
         logger.error(f"Error in handle_system_messages: {e}")
+
 async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Updated captcha verification using the specialized welcome message sender.
@@ -551,7 +585,6 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Incorrect answer")
     except Exception as e:
         logger.error(f"Captcha error: {e}")
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Fixed message handler with proper markdown handling.
@@ -1143,16 +1176,24 @@ application.add_handler(CommandHandler("mute30", mute30))
 application.add_handler(CommandHandler("mute1hr", mute1hr))
 application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
-application.add_handler(CommandHandler("solexafixwelcome", solexafixwelcome_command))  # Add the diagnostic command
-
-# Basic handler for all messages to catch system messages
-application.add_handler(MessageHandler(filters.ALL, handle_system_messages))
-
-# Combined handler for media messages
-application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, handle_media_message))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
+application.add_handler(CommandHandler("solexafixwelcome", solexafixwelcome_command))
+
+# Combined handler for media messages - must come before the system message handler
+application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, handle_media_message))
+
+# New chat members handler
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
+
+# System message handler with a precise filter that won't interfere with other handlers
+application.add_handler(MessageHandler(
+    ~filters.TEXT & ~filters.COMMAND & ~filters.PHOTO & ~filters.VIDEO & 
+    ~filters.AUDIO & ~filters.VOICE & ~filters.ANIMATION & ~filters.StatusUpdate.NEW_CHAT_MEMBERS,
+    handle_system_messages
+))
+
+# Regular text and command handlers
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(MessageHandler(filters.COMMAND, handle_command_as_filter))
 application.add_handler(CallbackQueryHandler(verify_captcha, pattern=r"^captcha_\d+_\d+$"))
