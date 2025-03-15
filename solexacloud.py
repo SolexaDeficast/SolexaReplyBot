@@ -683,7 +683,8 @@ async def cleansystem_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     """
     if update.message.chat.type == "private":
         await update.message.reply_text("Group-only command ❌")
-if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
         await update.message.reply_text("No permission ❌")
         return
     
