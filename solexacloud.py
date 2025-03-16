@@ -37,6 +37,8 @@ AUTODELETE_CONFIG_FILE = "/data/autodelete_config.json"
 autodelete_config = {
     "admin": 30, "error": 15, "captcha": 60, "welcome": 0, "filter": 0, "system": 0
 }
+WELCOME_AUTODELETE_STATE_FILE = "/data/welcome_autodelete_state.json"
+welcome_auto_delete = {}
 
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
@@ -162,6 +164,28 @@ def save_autodelete_config():
         logger.info(f"Auto-delete config saved: {repr(autodelete_config)}")
     except Exception as e:
         logger.error(f"Error saving auto-delete config: {e}")
+
+def load_welcome_autodelete_state():
+    global welcome_auto_delete
+    try:
+        if os.path.exists(WELCOME_AUTODELETE_STATE_FILE):
+            with open(WELCOME_AUTODELETE_STATE_FILE, 'r') as f:
+                data = json.load(f)
+                welcome_auto_delete = {int(chat_id): bool(state) for chat_id, state in data.items()}
+        else:
+            welcome_auto_delete = {}
+        logger.info(f"Welcome auto-delete state loaded: {repr(welcome_auto_delete)}")
+    except Exception as e:
+        logger.error(f"Error loading welcome auto-delete state: {e}")
+        welcome_auto_delete = {}
+
+def save_welcome_autodelete_state():
+    try:
+        with open(WELCOME_AUTODELETE_STATE_FILE, 'w') as f:
+            json.dump({str(chat_id): state for chat_id, state in welcome_auto_delete.items()}, f)
+        logger.info(f"Welcome auto-delete state saved: {repr(welcome_auto_delete)}")
+    except Exception as e:
+        logger.error(f"Error saving welcome auto-delete state: {e}")
 
 def escape_markdown_v2(text):
     if not text:
@@ -410,6 +434,15 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await send_formatted_and_delete(context, chat_id, f"Welcome {username}! Please verify yourself.\n\n{question}", "captcha", reply_markup=reply_markup)
             else:
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
+                    if chat_id in welcome_auto_delete and welcome_auto_delete[chat_id]:
+                        if "message_ids" in welcome_state[chat_id]:
+                            for msg_id in welcome_state[chat_id]["message_ids"][:]:
+                                try:
+                                    await context.bot.delete_message(chat_id, msg_id)
+                                    welcome_state[chat_id]["message_ids"].remove(msg_id)
+                                    logger.info(f"Auto-deleted old welcome message {msg_id}")
+                                except Exception as e:
+                                    logger.error(f"Failed to auto-delete welcome message {msg_id}: {e}")
                     msg = await send_welcome_message(context, chat_id, welcome_state[chat_id], username)
                     if msg:
                         welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
@@ -485,14 +518,15 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.restrict_chat_member(chat_id, target_user_id, permissions)
             await query.message.delete()
             if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
-                if "message_ids" in welcome_state[chat_id]:
-                    for msg_id in welcome_state[chat_id]["message_ids"][:]:
-                        try:
-                            await context.bot.delete_message(chat_id, msg_id)
-                            welcome_state[chat_id]["message_ids"].remove(msg_id)
-                            logger.info(f"Successfully deleted old welcome message {msg_id}")
-                        except Exception as e:
-                            logger.error(f"Failed to delete welcome message {msg_id}: {e}")
+                if chat_id in welcome_auto_delete and welcome_auto_delete[chat_id]:
+                    if "message_ids" in welcome_state[chat_id]:
+                        for msg_id in welcome_state[chat_id]["message_ids"][:]:
+                            try:
+                                await context.bot.delete_message(chat_id, msg_id)
+                                welcome_state[chat_id]["message_ids"].remove(msg_id)
+                                logger.info(f"Auto-deleted old welcome message {msg_id}")
+                            except Exception as e:
+                                logger.error(f"Failed to auto-delete welcome message {msg_id}: {e}")
                 msg = await send_welcome_message(context, chat_id, welcome_state[chat_id], username)
                 if msg:
                     welcome_state[chat_id].setdefault("message_ids", []).append(msg.message_id)
@@ -648,6 +682,7 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "• `/mute10 @username` or reply: Mutes for 10 minutes.\n"
         "• `/mute30 @username` or reply: Mutes for 30 minutes.\n"
         "• `/mute1hr @username` or reply: Mutes for 1 hour.\n"
+        "• `/unmute @username` or reply: Unmutes a user.\n"
         "• `/unban @username` or reply: Unbans a user.\n"
         "• `/cleansystem ON|OFF|STATUS`: Toggle system message cleaning.\n\n"
         "*🧹 Auto-Delete Settings*\n"
@@ -665,7 +700,8 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "*👋 Welcome Messages*\n"
         "• `/setsolexawelcome <message>`: Set text welcome.\n"
         "• `/setsolexawelcome ON|OFF|status|preview`: Manage welcome.\n"
-        "• `/setsolexawelcome` with media: Set media welcome.\n\n"
+        "• `/setsolexawelcome` with media: Set media welcome.\n"
+        "• `/setsolexawelcomeautodelete ON|OFF|STATUS`: Toggle auto-delete of old welcome messages on new joins.\n\n"
         "*🎉 General Features*\n"
         "• Keywords like `profits`, `slut`, `launch cat` trigger media.\n"
         "• Use `*bold*`, `_italics_`, `[links](https://example.com)` for formatting.\n\n"
@@ -744,13 +780,40 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
                 logger.info(f"Preview sent successfully, message_id: {msg.message_id}")
             except Exception as e:
                 logger.error(f"Failed to send preview: {e}")
-                await send_and_delete(context, chat_id, "Failed to send preview ❌", "error")
+                await send_and_delete(soaptext, chat_id, "Failed to send preview ❌", "error")
     else:
         text = args[1]
         entities = parse_markdown_entities(text)
         welcome_state[chat_id].update({"enabled": True, "type": "text", "file_id": None, "text": text, "entities": entities, "message_ids": []})
         save_welcome_state()
         await send_and_delete(context, chat_id, "Welcome text set ✅", "admin")
+
+async def setsolexawelcome_autodelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type == "private":
+        await send_and_delete(context, update.message.chat_id, "Group-only command ❌", "error")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await send_and_delete(context, update.message.chat_id, "No permission ❌", "error")
+        return
+    chat_id = update.message.chat_id
+    if not context.args:
+        await send_and_delete(context, chat_id, "Usage: /setsolexawelcomeautodelete ON|OFF|STATUS", "admin")
+        return
+    action = context.args[0].upper()
+    if action == "ON":
+        welcome_auto_delete[chat_id] = True
+        save_welcome_autodelete_state()
+        await send_and_delete(context, chat_id, "Welcome message auto-delete enabled ✅", "admin")
+    elif action == "OFF":
+        welcome_auto_delete[chat_id] = False
+        save_welcome_autodelete_state()
+        await send_and_delete(context, chat_id, "Welcome message auto-delete disabled ✅", "admin")
+    elif action == "STATUS":
+        state = welcome_auto_delete.get(chat_id, False)
+        status_text = "enabled" if state else "disabled"
+        await send_and_delete(context, chat_id, f"Welcome message auto-delete is currently {status_text}", "admin")
+    else:
+        await send_and_delete(context, chat_id, "Usage: /setsolexawelcomeautodelete ON|OFF|STATUS", "admin")
 
 async def handle_media_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Entered handle_media_message for update: {update.message}")
@@ -848,6 +911,8 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_user = context.args[0] if context.args else None
             if not target_user:
                 user_id = await get_user_id_from_reply(update)
+                if user_id:
+                    target_user = update.message.reply_to_message.from_user.username or update.message.reply_to_message.from_user.first_name
             else:
                 user_id = await resolve_user(update.message.chat_id, target_user, context)
             if not user_id:
@@ -866,6 +931,8 @@ async def kick_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_user = context.args[0] if context.args else None
             if not target_user:
                 user_id = await get_user_id_from_reply(update)
+                if user_id:
+                    target_user = update.message.reply_to_message.from_user.username or update.message.reply_to_message.from_user.first_name
             else:
                 user_id = await resolve_user(update.message.chat_id, target_user, context)
             if not user_id:
@@ -885,6 +952,8 @@ async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE, duration
             target_user = context.args[0] if context.args else None
             if not target_user:
                 user_id = await get_user_id_from_reply(update)
+                if user_id:
+                    target_user = update.message.reply_to_message.from_user.username or update.message.reply_to_message.from_user.first_name
             else:
                 user_id = await resolve_user(update.message.chat_id, target_user, context)
             if not user_id:
@@ -908,12 +977,38 @@ async def mute30(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mute1hr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await mute_user(update, context, timedelta(hours=1))
 
+async def unmute_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        try:
+            target_user = context.args[0] if context.args else None
+            if not target_user:
+                user_id = await get_user_id_from_reply(update)
+                if user_id:
+                    target_user = update.message.reply_to_message.from_user.username or update.message.reply_to_message.from_user.first_name
+            else:
+                user_id = await resolve_user(update.message.chat_id, target_user, context)
+            if not user_id:
+                await send_and_delete(context, update.message.chat_id, f"Error: User {target_user} not found.", "error")
+                return
+            permissions = ChatPermissions(
+                can_send_messages=True, can_send_photos=True, can_send_videos=True,
+                can_send_other_messages=True, can_send_polls=True, can_add_web_page_previews=True
+            )
+            await context.bot.restrict_chat_member(update.message.chat_id, user_id, permissions)
+            await send_and_delete(context, update.message.chat_id, f"User {target_user} unmuted ✅", "admin")
+        except IndexError:
+            await send_and_delete(context, update.message.chat_id, "Usage: /unmute @username or reply to a user", "admin")
+    else:
+        await send_and_delete(context, update.message.chat_id, "No permission ❌", "error")
+
 async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
         try:
             target_user = context.args[0] if context.args else None
             if not target_user:
                 user_id = await get_user_id_from_reply(update)
+                if user_id:
+                    target_user = update.message.reply_to_message.from_user.username or update.message.reply_to_message.from_user.first_name
             else:
                 user_id = await resolve_user(update.message.chat_id, target_user, context)
             if not user_id:
@@ -1009,6 +1104,7 @@ def parse_markdown_entities(text):
 application.add_handler(CommandHandler("solexahelp", solexahelp_command))
 application.add_handler(CommandHandler("solexacaptcha", solexacaptcha_command))
 application.add_handler(CommandHandler("setsolexawelcome", setsolexawelcome_command))
+application.add_handler(CommandHandler("setsolexawelcomeautodelete", setsolexawelcome_autodelete_command))
 application.add_handler(CommandHandler("cleansystem", cleansystem_command))
 application.add_handler(CommandHandler("solexaautodelete", solexaautodelete_command))
 application.add_handler(CommandHandler("ban", ban_user))
@@ -1016,6 +1112,7 @@ application.add_handler(CommandHandler("kick", kick_user))
 application.add_handler(CommandHandler("mute10", mute10))
 application.add_handler(CommandHandler("mute30", mute30))
 application.add_handler(CommandHandler("mute1hr", mute1hr))
+application.add_handler(CommandHandler("unmute", unmute_user))
 application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
@@ -1048,6 +1145,7 @@ async def startup():
     load_welcome_state()
     load_cleansystem_state()
     load_autodelete_config()
+    load_welcome_autodelete_state()
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
