@@ -33,14 +33,9 @@ WELCOME_STATE_FILE = "/data/welcome_state.json"
 welcome_state = {}
 CLEANSYSTEM_STATE_FILE = "/data/cleansystem_state.json"
 cleansystem_enabled = {}
-AUTODELETE_CONFIG_FILE = "/data/autodelete_config.json"  # New file for auto-delete settings
+AUTODELETE_CONFIG_FILE = "/data/autodelete_config.json"
 autodelete_config = {
-    "admin": 30,    # Admin command responses
-    "error": 15,    # Error messages
-    "captcha": 60,  # Captcha-related messages
-    "welcome": 0,   # Welcome messages (0 = disabled by default)
-    "filter": 0,    # Filter responses (0 = disabled by default)
-    "system": 0     # System message cleaning confirmations
+    "admin": 30, "error": 15, "captcha": 60, "welcome": 0, "filter": 0, "system": 0
 }
 
 keyword_responses = {
@@ -232,51 +227,49 @@ def process_markdown_v2(text):
     return result
 
 async def send_and_delete(context, chat_id, text, timeout_category="admin"):
-    """Send a message and schedule it for deletion based on category timeout."""
     timeout = autodelete_config.get(timeout_category, 0)
     msg = await context.bot.send_message(chat_id, text)
     if timeout > 0:
         context.job_queue.run_once(lambda x: delete_message(x, chat_id, msg.message_id), timeout)
     return msg
 
-async def send_formatted_and_delete(context, chat_id, text, timeout_category="admin", message_type="text", file_id=None):
-    """Send a formatted message with auto-deletion."""
+async def send_formatted_and_delete(context, chat_id, text, timeout_category="admin", message_type="text", file_id=None, reply_markup=None):
     timeout = autodelete_config.get(timeout_category, 0)
-    msg = await send_formatted_message(context, chat_id, text, message_type, file_id)
+    msg = await send_formatted_message(context, chat_id, text, message_type, file_id, reply_markup)
     if timeout > 0 and msg:
         context.job_queue.run_once(lambda x: delete_message(x, chat_id, msg.message_id), timeout)
     return msg
 
-async def send_formatted_message(context, chat_id, text, message_type="text", file_id=None):
+async def send_formatted_message(context, chat_id, text, message_type="text", file_id=None, reply_markup=None):
     try:
         formatted_text = process_markdown_v2(text)
         if message_type == "text":
-            return await context.bot.send_message(chat_id, formatted_text, parse_mode='MarkdownV2')
+            return await context.bot.send_message(chat_id, formatted_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
         elif message_type == "photo":
-            return await context.bot.send_photo(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2')
+            return await context.bot.send_photo(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
         elif message_type == "video":
-            return await context.bot.send_video(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2')
+            return await context.bot.send_video(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
         elif message_type == "animation":
-            return await context.bot.send_animation(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2')
+            return await context.bot.send_animation(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
         elif message_type == "audio":
-            return await context.bot.send_audio(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2')
+            return await context.bot.send_audio(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
         elif message_type == "voice":
-            return await context.bot.send_voice(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2')
+            return await context.bot.send_voice(chat_id, file_id, caption=formatted_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Failed to send with MarkdownV2: {e}")
         logger.info(f"Falling back to plain text: {text}")
         if message_type == "text":
-            return await context.bot.send_message(chat_id, text, parse_mode=None)
+            return await context.bot.send_message(chat_id, text, parse_mode=None, reply_markup=reply_markup)
         elif message_type == "photo":
-            return await context.bot.send_photo(chat_id, file_id, caption=text, parse_mode=None)
+            return await context.bot.send_photo(chat_id, file_id, caption=text, parse_mode=None, reply_markup=reply_markup)
         elif message_type == "video":
-            return await context.bot.send_video(chat_id, file_id, caption=text, parse_mode=None)
+            return await context.bot.send_video(chat_id, file_id, caption=text, parse_mode=None, reply_markup=reply_markup)
         elif message_type == "animation":
-            return await context.bot.send_animation(chat_id, file_id, caption=text, parse_mode=None)
+            return await context.bot.send_animation(chat_id, file_id, caption=text, parse_mode=None, reply_markup=reply_markup)
         elif message_type == "audio":
-            return await context.bot.send_audio(chat_id, file_id, caption=text, parse_mode=None)
+            return await context.bot.send_audio(chat_id, file_id, caption=text, parse_mode=None, reply_markup=reply_markup)
         elif message_type == "voice":
-            return await context.bot.send_voice(chat_id, file_id, caption=text, parse_mode=None)
+            return await context.bot.send_voice(chat_id, file_id, caption=text, parse_mode=None, reply_markup=reply_markup)
 
 async def send_welcome_message(context, chat_id, welcome_config, username):
     try:
@@ -649,7 +642,6 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     help_text = (
         "*🚀 SOLEXA Bot Help Menu 🚀*\n"
         "Here's a detailed guide to all commands and features available in the bot.\n\n"
-
         "*⚙️ Admin Commands*\n"
         "• `/ban @username` or reply: Bans a user.\n"
         "• `/kick @username` or reply: Kicks a user.\n"
@@ -658,32 +650,25 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "• `/mute1hr @username` or reply: Mutes for 1 hour.\n"
         "• `/unban @username` or reply: Unbans a user.\n"
         "• `/cleansystem ON|OFF|STATUS`: Toggle system message cleaning.\n\n"
-
         "*🧹 Auto-Delete Settings*\n"
-        "Control how long bot messages stay before auto-deleting.\n"
         "• `/solexaautodelete`: Show current settings.\n"
         "• `/solexaautodelete [category] [seconds]`: Set timeout (0 = disable).\n"
         "  Categories: `admin`, `error`, `captcha`, `welcome`, `filter`, `system`\n"
-        "  Example: `/solexaautodelete error 10` (errors delete after 10s).\n\n"
-
+        "  Example: `/solexaautodelete error 10`.\n\n"
         "*📝 Filters*\n"
         "• `/addsolexafilter keyword text`: Add text filter.\n"
         "• `/addsolexafilter keyword [text]`: Add media filter (with media).\n"
         "• `/listsolexafilters`: List filters.\n"
         "• `/removesolexafilter keyword`: Remove filter.\n\n"
-
         "*🔒 Captcha*\n"
         "• `/solexacaptcha ON|OFF|status`: Toggle captcha.\n\n"
-
         "*👋 Welcome Messages*\n"
         "• `/setsolexawelcome <message>`: Set text welcome.\n"
         "• `/setsolexawelcome ON|OFF|status|preview`: Manage welcome.\n"
         "• `/setsolexawelcome` with media: Set media welcome.\n\n"
-
         "*🎉 General Features*\n"
         "• Keywords like `profits`, `slut`, `launch cat` trigger media.\n"
         "• Use `*bold*`, `_italics_`, `[links](https://example.com)` for formatting.\n\n"
-
         "*📧 Need Help?*\n"
         "Contact the bot admin. Enjoy! 🎉"
     )
@@ -1062,7 +1047,7 @@ async def startup():
     load_captcha_state()
     load_welcome_state()
     load_cleansystem_state()
-    load_autodelete_config()  # Load the new auto-delete settings
+    load_autodelete_config()
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
