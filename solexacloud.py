@@ -1067,7 +1067,7 @@ async def solexafilters_command(update: Update, context: ContextTypes.DEFAULT_TY
     if filters_list:
         filter_keywords = sorted(filters_list.keys())
         filter_text = "*Available Filters:*\n" + "\n".join(f"/{keyword}" for keyword in filter_keywords)
-        await send_formatted_and_delete(context, chat_id, filter_text, "filter")
+        await send_formatted_and_delete(context, chat_id, filter_text, "admin")
     else:
         await send_and_delete(context, chat_id, "No filters available in this group.", "filter")
 
