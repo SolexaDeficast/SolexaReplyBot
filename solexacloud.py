@@ -35,7 +35,7 @@ CLEANSYSTEM_STATE_FILE = "/data/cleansystem_state.json"
 cleansystem_enabled = {}
 AUTODELETE_CONFIG_FILE = "/data/autodelete_config.json"
 autodelete_config = {
-    "admin": 30, "error": 15, "captcha": 60, "welcome": 0, "filter": 0, "system": 0
+    "admin": 30, "error": 15, "captcha": 30, "captcha_prompt": 120, "welcome": 0, "filter": 0, "system": 0
 }
 WELCOME_AUTODELETE_STATE_FILE = "/data/welcome_autodelete_state.json"
 welcome_auto_delete = {}
@@ -149,13 +149,20 @@ def save_cleansystem_state():
 
 def load_autodelete_config():
     global autodelete_config
+    default_config = {
+        "admin": 30, "error": 15, "captcha": 30, "captcha_prompt": 120, "welcome": 0, "filter": 0, "system": 0
+    }
     try:
         if os.path.exists(AUTODELETE_CONFIG_FILE):
             with open(AUTODELETE_CONFIG_FILE, 'r') as f:
-                autodelete_config.update(json.load(f))
+                loaded_config = json.load(f)
+                autodelete_config = {**default_config, **loaded_config}
+        else:
+            autodelete_config = default_config.copy()
         logger.info(f"Auto-delete config loaded: {repr(autodelete_config)}")
     except Exception as e:
         logger.error(f"Error loading auto-delete config: {e}")
+        autodelete_config = default_config.copy()
 
 def save_autodelete_config():
     try:
@@ -431,7 +438,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 captcha_attempts[user_id] = {"answer": correct_answer, "attempts": 0, "chat_id": chat_id, "username": username}
                 keyboard = [[InlineKeyboardButton(str(opt), callback_data=f"captcha_{user_id}_{opt}")] for opt in options]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                await send_formatted_and_delete(context, chat_id, f"Welcome {username}! Please verify yourself.\n\n{question}", "captcha", reply_markup=reply_markup)
+                await send_formatted_and_delete(context, chat_id, f"Welcome {username}! Please verify yourself.\n\n{question}", "captcha_prompt", reply_markup=reply_markup)
             else:
                 if chat_id in welcome_state and welcome_state[chat_id]["enabled"]:
                     if chat_id in welcome_auto_delete and welcome_auto_delete[chat_id]:
@@ -538,7 +545,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             attempts += 1
             captcha_attempts[target_user_id]["attempts"] = attempts
-            if attempts >= 3:
+            if attempts zoverriding >= 3:
                 await context.bot.ban_chat_member(chat_id, target_user_id)
                 await context.bot.unban_chat_member(chat_id, target_user_id)
                 await query.message.edit_text("❌ Removed after 3 failed attempts")
