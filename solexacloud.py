@@ -693,7 +693,8 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "*📝 Filters*\n"
         "• `/addsolexafilter keyword text`: Add text filter.\n"
         "• `/addsolexafilter keyword [text]`: Add media filter (with media).\n"
-        "• `/listsolexafilters`: List filters.\n"
+        "• `/listsolexafilters`: List filters (admin only).\n"
+        "• `/solexafilters`: Show filter keywords (all members).\n"
         "• `/removesolexafilter keyword`: Remove filter.\n\n"
         "*🔒 Captcha*\n"
         "• `/solexacaptcha ON|OFF|status`: Toggle captcha.\n\n"
@@ -780,7 +781,7 @@ async def setsolexawelcome_command(update: Update, context: ContextTypes.DEFAULT
                 logger.info(f"Preview sent successfully, message_id: {msg.message_id}")
             except Exception as e:
                 logger.error(f"Failed to send preview: {e}")
-                await send_and_delete(soaptext, chat_id, "Failed to send preview ❌", "error")
+                await send_and_delete(context, chat_id, "Failed to send preview ❌", "error")
     else:
         text = args[1]
         entities = parse_markdown_entities(text)
@@ -1057,6 +1058,19 @@ async def list_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await send_and_delete(context, update.message.chat_id, "No permission ❌", "error")
 
+async def solexafilters_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type == "private":
+        await send_and_delete(context, update.message.chat_id, "Group-only command ❌", "error")
+        return
+    chat_id = update.message.chat_id
+    filters_list = filters_dict.get(chat_id, {})
+    if filters_list:
+        filter_keywords = sorted(filters_list.keys())
+        filter_text = "*Available Filters:*\n" + "\n".join(f"/{keyword}" for keyword in filter_keywords)
+        await send_formatted_and_delete(context, chat_id, filter_text, "filter")
+    else:
+        await send_and_delete(context, chat_id, "No filters available in this group.", "filter")
+
 async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private" and update.message.from_user.id in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
         try:
@@ -1116,6 +1130,7 @@ application.add_handler(CommandHandler("unmute", unmute_user))
 application.add_handler(CommandHandler("unban", unban_user))
 application.add_handler(CommandHandler("addsolexafilter", add_text_filter))
 application.add_handler(CommandHandler("listsolexafilters", list_filters))
+application.add_handler(CommandHandler("solexafilters", solexafilters_command))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(CommandHandler("solexafixwelcome", solexafixwelcome_command))
 
