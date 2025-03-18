@@ -545,7 +545,7 @@ async def verify_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             attempts += 1
             captcha_attempts[target_user_id]["attempts"] = attempts
-            if attempts zoverriding >= 3:
+            if attempts >= 3:
                 await context.bot.ban_chat_member(chat_id, target_user_id)
                 await context.bot.unban_chat_member(chat_id, target_user_id)
                 await query.message.edit_text("❌ Removed after 3 failed attempts")
@@ -655,11 +655,11 @@ async def solexaautodelete_command(update: Update, context: ContextTypes.DEFAULT
         await send_and_delete(context, chat_id, f"Auto-delete settings:\n{status}\n\nUse: /solexaautodelete [category] [seconds]", "admin")
         return
     if len(context.args) < 2:
-        await send_and_delete(context, chat_id, "Usage: /solexaautodelete [category] [seconds]\nCategories: admin, error, captcha, welcome, filter, system", "admin")
+        await send_and_delete(context, chat_id, "Usage: /solexaautodelete [category] [seconds]\nCategories: admin, error, captcha, captcha_prompt, welcome, filter, system", "admin")
         return
     category = context.args[0].lower()
     if category not in autodelete_config:
-        await send_and_delete(context, chat_id, "Invalid category. Use: admin, error, captcha, welcome, filter, system", "error")
+        await send_and_delete(context, chat_id, "Invalid category. Use: admin, error, captcha, captcha_prompt, welcome, filter, system", "error")
         return
     try:
         seconds = int(context.args[1])
@@ -695,8 +695,8 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "*🧹 Auto-Delete Settings*\n"
         "• `/solexaautodelete`: Show current settings.\n"
         "• `/solexaautodelete [category] [seconds]`: Set timeout (0 = disable).\n"
-        "  Categories: `admin`, `error`, `captcha`, `welcome`, `filter`, `system`\n"
-        "  Example: `/solexaautodelete error 10`.\n\n"
+        "  Categories: `admin`, `error`, `captcha`, `captcha_prompt`, `welcome`, `filter`, `system`\n"
+        "  Example: `/solexaautodelete captcha_prompt 120` (CAPTCHA prompt: 120s, others: 30s).\n\n"
         "*📝 Filters*\n"
         "• `/addsolexafilter keyword text`: Add text filter.\n"
         "• `/addsolexafilter keyword [text]`: Add media filter (with media).\n"
