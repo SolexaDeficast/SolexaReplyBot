@@ -204,13 +204,12 @@ def load_chat_ids():
                 data = json.load(f)
                 chat_ids_map = {tag: int(chat_id) for tag, chat_id in data.items()}
         else:
-            # Initial setup with your provided chat IDs
             chat_ids_map = {
                 "#solexamain": -1002280396764,
                 "#trusted": -1002213872502,
                 "#bottest": -1002408047628
             }
-            save_chat_ids()  # Save initial config
+            save_chat_ids()
         logger.info(f"Chat IDs loaded: {repr(chat_ids_map)}")
     except Exception as e:
         logger.error(f"Error loading chat IDs: {e}")
@@ -746,7 +745,8 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "• `/setsolexawelcome` with media: Set media welcome.\n"
         "• `/setsolexawelcomeautodelete ON|OFF|STATUS`: Toggle auto-delete of old welcome messages on new joins.\n\n"
         "*📢 Broadcast*\n"
-        "• `/solexabroadcast #tag1 #tag2 Message`: Broadcast to tagged chats (e.g., #solexamain, #trusted, #bottest).\n\n"
+        "• `/solexabroadcast #tag1 #tag2 Message`: Broadcast to tagged chats (e.g., #solexamain, #trusted, #bottest).\n"
+        "  Supports text or media with caption.\n\n"
         "*🎉 General Features*\n"
         "• Keywords like `profits`, `slut`, `launch cat` trigger media.\n"
         "• Use `*bold*`, `_italics_`, `[links](https://example.com)` for formatting.\n\n"
@@ -1164,20 +1164,28 @@ async def solexabroadcast_command(update: Update, context: ContextTypes.DEFAULT_
         await send_and_delete(context, update.message.chat_id, "No permission ❌", "error")
         return
     chat_id = update.message.chat_id
-    if not context.args or len(context.args) < 2:
+    
+    # Check if message has text or caption
+    message_text = update.message.text or update.message.caption or ""
+    if not message_text.startswith('/solexabroadcast'):
         await send_and_delete(context, chat_id, "Usage: /solexabroadcast #chat1 #chat2 Message here\nAvailable tags: #solexamain, #trusted, #bottest", "admin")
         return
     
-    # Split command into parts
-    args = update.message.text.split()
-    target_tags = [arg for arg in args[1:] if arg.startswith("#")]
-    message_start_idx = len(target_tags) + 1  # After command and tags
-    if message_start_idx >= len(args):
-        await send_and_delete(context, chat_id, "Please provide a message to broadcast", "admin")
+    args = message_text.split()
+    if len(args) < 2:
+        await send_and_delete(context, chat_id, "Usage: /solexabroadcast #chat1 #chat2 Message here\nAvailable tags: #solexamain, #trusted, #bottest", "admin")
         return
     
-    # Handle media if present, otherwise use text
-    message_text = " ".join(args[message_start_idx:])
+    # Extract target tags and message
+    target_tags = [arg for arg in args[1:] if arg.startswith("#")]
+    message_start_idx = len(target_tags) + 1  # After command and tags
+    broadcast_content = " ".join(args[message_start_idx:]) if message_start_idx < len(args) else ""
+    
+    if not target_tags:
+        await send_and_delete(context, chat_id, "Please specify at least one chat tag (e.g., #solexamain)", "admin")
+        return
+
+    # Determine media type and file_id if present
     media_type = None
     file_id = None
     if update.message.photo:
@@ -1195,11 +1203,19 @@ async def solexabroadcast_command(update: Update, context: ContextTypes.DEFAULT_
     elif update.message.voice:
         media_type = "voice"
         file_id = update.message.voice.file_id
+    elif update.message.document:
+        mime_type = update.message.document.mime_type
+        if mime_type.startswith('video/'):
+            media_type = 'video'
+            file_id = update.message.document.file_id
+        elif mime_type.startswith('image/'):
+            media_type = 'photo'
+            file_id = update.message.document.file_id
+        elif mime_type.startswith('audio/'):
+            media_type = 'audio'
+            file_id = update.message.document.file_id
 
-    # Prepare broadcast content
-    broadcast_text = f"*Solexa says:* {message_text}"
-
-    # Validate and broadcast
+    # Validate targets
     valid_targets = []
     for tag in target_tags:
         if tag in chat_ids_map:
@@ -1211,14 +1227,14 @@ async def solexabroadcast_command(update: Update, context: ContextTypes.DEFAULT_
         await send_and_delete(context, chat_id, "No valid chat targets specified", "error")
         return
 
-    # Broadcast the message
+    # Broadcast the message (no "Solexa says:" prefix)
     failed_chats = []
     for target_chat_id in valid_targets:
         try:
             await send_formatted_and_delete(
                 context,
                 target_chat_id,
-                broadcast_text,
+                broadcast_content,
                 "system",
                 message_type=media_type or "text",
                 file_id=file_id
