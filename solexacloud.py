@@ -454,19 +454,31 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         await send_and_delete(context, chat_id, "No permission ❌", "error")
         return
     
-    args = message_text.split()
-    if len(args) < 2:
+    # Split the message to extract command and tags, preserving the rest of the text with newlines
+    parts = message_text.split(None, 1)  # Split on first whitespace to get command
+    if len(parts) < 2:
         await send_and_delete(context, chat_id, "Usage: /solexabroadcast #chat1 #chat2 Message here\nAvailable tags: #solexamain, #trusted, #bottest", "admin")
         return
     
-    target_tags = [arg for arg in args[1:] if arg.startswith("#")]
-    message_start_idx = len(target_tags) + 1
-    broadcast_content = " ".join(args[message_start_idx:]) if message_start_idx < len(args) else ""
+    remaining_text = parts[1]
+    # Extract tags and message content
+    words = remaining_text.split()
+    target_tags = []
+    message_start_idx = 0
+    for i, word in enumerate(words):
+        if word.startswith("#"):
+            target_tags.append(word)
+            message_start_idx = i + 1
+        else:
+            break
     
     if not target_tags:
         await send_and_delete(context, chat_id, "Please specify at least one chat tag (e.g., #solexamain)", "admin")
         return
-
+    
+    # Reconstruct the message content, preserving newlines
+    broadcast_content = remaining_text[remaining_text.index(target_tags[-1]) + len(target_tags[-1]):].strip()
+    
     valid_targets = []
     for tag in target_tags:
         if tag in chat_ids_map:
