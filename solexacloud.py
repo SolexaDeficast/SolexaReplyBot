@@ -39,6 +39,8 @@ autodelete_config = {
 }
 WELCOME_AUTODELETE_STATE_FILE = "/data/welcome_autodelete_state.json"
 welcome_auto_delete = {}
+CHAT_IDS_FILE = "/data/chat_ids.json"
+chat_ids_map = {}  # Maps tags (e.g., "#room1") to chat_ids
 
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
@@ -193,6 +195,39 @@ def save_welcome_autodelete_state():
         logger.info(f"Welcome auto-delete state saved: {repr(welcome_auto_delete)}")
     except Exception as e:
         logger.error(f"Error saving welcome auto-delete state: {e}")
+
+def load_chat_ids():
+    global chat_ids_map
+    try:
+        if os.path.exists(CHAT_IDS_FILE):
+            with open(CHAT_IDS_FILE, 'r') as f:
+                data = json.load(f)
+                chat_ids_map = {tag: int(chat_id) for tag, chat_id in data.items()}
+        else:
+            # Initial setup with your provided chat IDs
+            chat_ids_map = {
+                "#solexamain": -1002280396764,
+                "#trusted": -1002213872502,
+                "#bottest": -1002408047628
+            }
+            save_chat_ids()  # Save initial config
+        logger.info(f"Chat IDs loaded: {repr(chat_ids_map)}")
+    except Exception as e:
+        logger.error(f"Error loading chat IDs: {e}")
+        chat_ids_map = {
+            "#solexamain": -1002280396764,
+            "#trusted": -1002213872502,
+            "#bottest": -1002408047628
+        }
+        save_chat_ids()
+
+def save_chat_ids():
+    try:
+        with open(CHAT_IDS_FILE, 'w') as f:
+            json.dump(chat_ids_map, f)
+        logger.info(f"Chat IDs saved: {repr(chat_ids_map)}")
+    except Exception as e:
+        logger.error(f"Error saving chat IDs: {e}")
 
 def escape_markdown_v2(text):
     if not text:
@@ -710,6 +745,8 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "• `/setsolexawelcome ON|OFF|status|preview`: Manage welcome.\n"
         "• `/setsolexawelcome` with media: Set media welcome.\n"
         "• `/setsolexawelcomeautodelete ON|OFF|STATUS`: Toggle auto-delete of old welcome messages on new joins.\n\n"
+        "*📢 Broadcast*\n"
+        "• `/solexabroadcast #tag1 #tag2 Message`: Broadcast to tagged chats (e.g., #solexamain, #trusted, #bottest).\n\n"
         "*🎉 General Features*\n"
         "• Keywords like `profits`, `slut`, `launch cat` trigger media.\n"
         "• Use `*bold*`, `_italics_`, `[links](https://example.com)` for formatting.\n\n"
@@ -1119,6 +1156,84 @@ async def solexafixwelcome_command(update: Update, context: ContextTypes.DEFAULT
     processed_text = process_markdown_v2(sample_text)
     await send_and_delete(context, chat_id, f"Processed markdown: \n{processed_text}", "admin")
 
+async def solexabroadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type == "private":
+        await send_and_delete(context, update.message.chat_id, "Group-only command ❌", "error")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await send_and_delete(context, update.message.chat_id, "No permission ❌", "error")
+        return
+    chat_id = update.message.chat_id
+    if not context.args or len(context.args) < 2:
+        await send_and_delete(context, chat_id, "Usage: /solexabroadcast #chat1 #chat2 Message here\nAvailable tags: #solexamain, #trusted, #bottest", "admin")
+        return
+    
+    # Split command into parts
+    args = update.message.text.split()
+    target_tags = [arg for arg in args[1:] if arg.startswith("#")]
+    message_start_idx = len(target_tags) + 1  # After command and tags
+    if message_start_idx >= len(args):
+        await send_and_delete(context, chat_id, "Please provide a message to broadcast", "admin")
+        return
+    
+    # Handle media if present, otherwise use text
+    message_text = " ".join(args[message_start_idx:])
+    media_type = None
+    file_id = None
+    if update.message.photo:
+        media_type = "photo"
+        file_id = update.message.photo[-1].file_id
+    elif update.message.video:
+        media_type = "video"
+        file_id = update.message.video.file_id
+    elif update.message.animation:
+        media_type = "animation"
+        file_id = update.message.animation.file_id
+    elif update.message.audio:
+        media_type = "audio"
+        file_id = update.message.audio.file_id
+    elif update.message.voice:
+        media_type = "voice"
+        file_id = update.message.voice.file_id
+
+    # Prepare broadcast content
+    broadcast_text = f"*Solexa says:* {message_text}"
+
+    # Validate and broadcast
+    valid_targets = []
+    for tag in target_tags:
+        if tag in chat_ids_map:
+            valid_targets.append(chat_ids_map[tag])
+        else:
+            await send_and_delete(context, chat_id, f"Chat tag {tag} not found in Solexa's rooms", "error")
+    
+    if not valid_targets:
+        await send_and_delete(context, chat_id, "No valid chat targets specified", "error")
+        return
+
+    # Broadcast the message
+    failed_chats = []
+    for target_chat_id in valid_targets:
+        try:
+            await send_formatted_and_delete(
+                context,
+                target_chat_id,
+                broadcast_text,
+                "system",
+                message_type=media_type or "text",
+                file_id=file_id
+            )
+            logger.info(f"Broadcast sent to {target_chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to broadcast to {target_chat_id}: {e}")
+            failed_chats.append(target_chat_id)
+    
+    # Report success/failure
+    if failed_chats:
+        await send_and_delete(context, chat_id, f"Broadcast sent, but failed for chats: {', '.join(map(str, failed_chats))}", "admin")
+    else:
+        await send_and_delete(context, chat_id, "Broadcast sent to all specified chats ✅", "admin")
+
 def parse_markdown_entities(text):
     return []
 
@@ -1140,6 +1255,7 @@ application.add_handler(CommandHandler("listsolexafilters", list_filters))
 application.add_handler(CommandHandler("solexafilters", solexafilters_command))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(CommandHandler("solexafixwelcome", solexafixwelcome_command))
+application.add_handler(CommandHandler("solexabroadcast", solexabroadcast_command))
 
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, handle_media_message))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
@@ -1168,6 +1284,7 @@ async def startup():
     load_cleansystem_state()
     load_autodelete_config()
     load_welcome_autodelete_state()
+    load_chat_ids()
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
