@@ -242,8 +242,8 @@ def process_markdown_v2(text):
         return ""
     special_chars = '_*[]()~`>#+-=|{}.!'
     processed = text.replace('\\', '\\\\')
-    # Preserve newlines as paragraph breaks by converting \n to \n\n
-    processed = processed.replace('\n', '\n\n')
+    # Do not double newlines; preserve the exact number of \n
+    # processed = processed.replace('\n', '\n\n')  # Removed this line
     i = 0
     result = ""
     in_bold = False
