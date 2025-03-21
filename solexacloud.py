@@ -242,6 +242,8 @@ def process_markdown_v2(text):
         return ""
     special_chars = '_*[]()~`>#+-=|{}.!'
     processed = text.replace('\\', '\\\\')
+    # Preserve newlines as paragraph breaks by converting \n to \n\n
+    processed = processed.replace('\n', '\n\n')
     i = 0
     result = ""
     in_bold = False
@@ -1047,7 +1049,7 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 user_id = await resolve_user(update.message.chat_id, target_user, context)
             if not user_id:
-                await send_and_delete(context, update.message.chat_id, f" FIVE55Error: User {target_user} not found.", "error")
+                await send_and_delete(context, update.message.chat_id, f"Error: User {target_user} not found.", "error")
                 return
             await context.bot.ban_chat_member(update.message.chat_id, user_id)
             await send_and_delete(context, update.message.chat_id, f"User {target_user} banned ✅", "admin")
