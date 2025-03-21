@@ -40,7 +40,7 @@ autodelete_config = {
 WELCOME_AUTODELETE_STATE_FILE = "/data/welcome_autodelete_state.json"
 welcome_auto_delete = {}
 CHAT_IDS_FILE = "/data/chat_ids.json"
-chat_ids_map = {}  # Maps tags (e.g., "#room1") to chat_ids
+chat_ids_map = {}
 
 keyword_responses = {
     "PutMP3TriggerKeywordHere": "PUTmp3FILEnameHere.mp3",
@@ -443,6 +443,60 @@ async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, messa
     except Exception as e:
         logger.error(f"Failed to delete message {message_id}: {e}")
 
+async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_text: str, media_type=None, file_id=None):
+    chat_id = update.message.chat_id
+    if update.message.chat.type == "private":
+        await send_and_delete(context, chat_id, "Group-only command ❌", "error")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await send_and_delete(context, chat_id, "No permission ❌", "error")
+        return
+    
+    args = message_text.split()
+    if len(args) < 2:
+        await send_and_delete(context, chat_id, "Usage: /solexabroadcast #chat1 #chat2 Message here\nAvailable tags: #solexamain, #trusted, #bottest", "admin")
+        return
+    
+    target_tags = [arg for arg in args[1:] if arg.startswith("#")]
+    message_start_idx = len(target_tags) + 1
+    broadcast_content = " ".join(args[message_start_idx:]) if message_start_idx < len(args) else ""
+    
+    if not target_tags:
+        await send_and_delete(context, chat_id, "Please specify at least one chat tag (e.g., #solexamain)", "admin")
+        return
+
+    valid_targets = []
+    for tag in target_tags:
+        if tag in chat_ids_map:
+            valid_targets.append(chat_ids_map[tag])
+        else:
+            await send_and_delete(context, chat_id, f"Chat tag {tag} not found in Solexa's rooms", "error")
+    
+    if not valid_targets:
+        await send_and_delete(context, chat_id, "No valid chat targets specified", "error")
+        return
+
+    failed_chats = []
+    for target_chat_id in valid_targets:
+        try:
+            await send_formatted_and_delete(
+                context,
+                target_chat_id,
+                broadcast_content,
+                "system",
+                message_type=media_type or "text",
+                file_id=file_id
+            )
+            logger.info(f"Broadcast sent to {target_chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to broadcast to {target_chat_id}: {e}")
+            failed_chats.append(target_chat_id)
+    
+    if failed_chats:
+        await send_and_delete(context, chat_id, f"Broadcast sent, but failed for chats: {', '.join(map(str, failed_chats))}", "admin")
+    else:
+        await send_and_delete(context, chat_id, "Broadcast sent to all specified chats ✅", "admin")
+
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chat_id = update.message.chat_id
@@ -706,7 +760,6 @@ async def solexaautodelete_command(update: Update, context: ContextTypes.DEFAULT
         await send_and_delete(context, chat_id, f"Auto-delete for {category} {status} ✅", "admin")
     except ValueError:
         await send_and_delete(context, chat_id, "Seconds must be a number", "error")
-
 async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == "private":
         await send_and_delete(context, update.message.chat_id, "Group-only command ❌", "error")
@@ -879,7 +932,40 @@ async def handle_media_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await send_and_delete(context, chat_id, "Error checking permissions ❌", "error")
         return
     caption = update.message.caption
-    if caption.startswith('/addsolexafilter'):
+    if caption.startswith('/solexabroadcast'):
+        media_type = None
+        file_id = None
+        if update.message.photo:
+            media_type = "photo"
+            file_id = update.message.photo[-1].file_id
+        elif update.message.video:
+            media_type = "video"
+            file_id = update.message.video.file_id
+        elif update.message.animation:
+            media_type = "animation"
+            file_id = update.message.animation.file_id
+        elif update.message.audio:
+            media_type = "audio"
+            file_id = update.message.audio.file_id
+        elif update.message.voice:
+            media_type = "voice"
+            file_id = update.message.voice.file_id
+        elif update.message.document:
+            mime_type = update.message.document.mime_type
+            if mime_type.startswith('video/'):
+                media_type = 'video'
+                file_id = update.message.document.file_id
+            elif mime_type.startswith('image/'):
+                media_type = 'photo'
+                file_id = update.message.document.file_id
+            elif mime_type.startswith('audio/'):
+                media_type = 'audio'
+                file_id = update.message.document.file_id
+        if media_type and file_id:
+            await broadcast_message(update, context, caption, media_type, file_id)
+        else:
+            await send_and_delete(context, chat_id, "No supported media type detected for broadcast", "error")
+    elif caption.startswith('/addsolexafilter'):
         args = caption.split(maxsplit=2)
         if len(args) < 2:
             await send_and_delete(context, chat_id, "Usage: Send media with caption '/addsolexafilter keyword [text]'", "admin")
@@ -961,7 +1047,7 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 user_id = await resolve_user(update.message.chat_id, target_user, context)
             if not user_id:
-                await send_and_delete(context, update.message.chat_id, f"Error: User {target_user} not found.", "error")
+                await send_and_delete(context, update.message.chat_id, f" FIVE55Error: User {target_user} not found.", "error")
                 return
             await context.bot.ban_chat_member(update.message.chat_id, user_id)
             await send_and_delete(context, update.message.chat_id, f"User {target_user} banned ✅", "admin")
@@ -1157,98 +1243,9 @@ async def solexafixwelcome_command(update: Update, context: ContextTypes.DEFAULT
     await send_and_delete(context, chat_id, f"Processed markdown: \n{processed_text}", "admin")
 
 async def solexabroadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type == "private":
-        await send_and_delete(context, update.message.chat_id, "Group-only command ❌", "error")
-        return
-    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
-        await send_and_delete(context, update.message.chat_id, "No permission ❌", "error")
-        return
-    chat_id = update.message.chat_id
-    
-    # Check if message has text or caption
-    message_text = update.message.text or update.message.caption or ""
-    if not message_text.startswith('/solexabroadcast'):
-        await send_and_delete(context, chat_id, "Usage: /solexabroadcast #chat1 #chat2 Message here\nAvailable tags: #solexamain, #trusted, #bottest", "admin")
-        return
-    
-    args = message_text.split()
-    if len(args) < 2:
-        await send_and_delete(context, chat_id, "Usage: /solexabroadcast #chat1 #chat2 Message here\nAvailable tags: #solexamain, #trusted, #bottest", "admin")
-        return
-    
-    # Extract target tags and message
-    target_tags = [arg for arg in args[1:] if arg.startswith("#")]
-    message_start_idx = len(target_tags) + 1  # After command and tags
-    broadcast_content = " ".join(args[message_start_idx:]) if message_start_idx < len(args) else ""
-    
-    if not target_tags:
-        await send_and_delete(context, chat_id, "Please specify at least one chat tag (e.g., #solexamain)", "admin")
-        return
-
-    # Determine media type and file_id if present
-    media_type = None
-    file_id = None
-    if update.message.photo:
-        media_type = "photo"
-        file_id = update.message.photo[-1].file_id
-    elif update.message.video:
-        media_type = "video"
-        file_id = update.message.video.file_id
-    elif update.message.animation:
-        media_type = "animation"
-        file_id = update.message.animation.file_id
-    elif update.message.audio:
-        media_type = "audio"
-        file_id = update.message.audio.file_id
-    elif update.message.voice:
-        media_type = "voice"
-        file_id = update.message.voice.file_id
-    elif update.message.document:
-        mime_type = update.message.document.mime_type
-        if mime_type.startswith('video/'):
-            media_type = 'video'
-            file_id = update.message.document.file_id
-        elif mime_type.startswith('image/'):
-            media_type = 'photo'
-            file_id = update.message.document.file_id
-        elif mime_type.startswith('audio/'):
-            media_type = 'audio'
-            file_id = update.message.document.file_id
-
-    # Validate targets
-    valid_targets = []
-    for tag in target_tags:
-        if tag in chat_ids_map:
-            valid_targets.append(chat_ids_map[tag])
-        else:
-            await send_and_delete(context, chat_id, f"Chat tag {tag} not found in Solexa's rooms", "error")
-    
-    if not valid_targets:
-        await send_and_delete(context, chat_id, "No valid chat targets specified", "error")
-        return
-
-    # Broadcast the message (no "Solexa says:" prefix)
-    failed_chats = []
-    for target_chat_id in valid_targets:
-        try:
-            await send_formatted_and_delete(
-                context,
-                target_chat_id,
-                broadcast_content,
-                "system",
-                message_type=media_type or "text",
-                file_id=file_id
-            )
-            logger.info(f"Broadcast sent to {target_chat_id}")
-        except Exception as e:
-            logger.error(f"Failed to broadcast to {target_chat_id}: {e}")
-            failed_chats.append(target_chat_id)
-    
-    # Report success/failure
-    if failed_chats:
-        await send_and_delete(context, chat_id, f"Broadcast sent, but failed for chats: {', '.join(map(str, failed_chats))}", "admin")
-    else:
-        await send_and_delete(context, chat_id, "Broadcast sent to all specified chats ✅", "admin")
+    if not update.message.text:
+        return  # Handled by handle_media_message for media broadcasts
+    await broadcast_message(update, context, update.message.text)
 
 def parse_markdown_entities(text):
     return []
