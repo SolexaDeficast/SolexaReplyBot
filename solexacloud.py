@@ -242,8 +242,6 @@ def process_markdown_v2(text):
         return ""
     special_chars = '_*[]()~`>#+-=|{}.!'
     processed = text.replace('\\', '\\\\')
-    # Do not double newlines; preserve the exact number of \n
-    # processed = processed.replace('\n', '\n\n')  # Removed this line
     i = 0
     result = ""
     in_bold = False
@@ -445,6 +443,52 @@ async def delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, messa
     except Exception as e:
         logger.error(f"Failed to delete message {message_id}: {e}")
 
+async def add_solexa_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type == "private":
+        await send_and_delete(context, update.message.chat_id, "Group-only command ❌", "error")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await send_and_delete(context, update.message.chat_id, "No permission ❌", "error")
+        return
+    chat_id = update.message.chat_id
+    if not context.args or len(context.args) < 2:
+        await send_and_delete(context, chat_id, "Usage: /addsolexaroom #tag chat_id", "admin")
+        return
+    tag = context.args[0].lower()
+    if not tag.startswith("#"):
+        await send_and_delete(context, chat_id, "Tag must start with # (e.g., #newroom)", "error")
+        return
+    try:
+        target_chat_id = int(context.args[1])
+    except ValueError:
+        await send_and_delete(context, chat_id, "Chat ID must be a number (e.g., -1001234567890)", "error")
+        return
+    chat_ids_map[tag] = target_chat_id
+    save_chat_ids()
+    await send_and_delete(context, chat_id, f"Room '{tag}' with chat ID {target_chat_id} added ✅", "admin")
+
+async def remove_solexa_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type == "private":
+        await send_and_delete(context, update.message.chat_id, "Group-only command ❌", "error")
+        return
+    if update.message.from_user.id not in [admin.user.id for admin in await update.effective_chat.get_administrators()]:
+        await send_and_delete(context, update.message.chat_id, "No permission ❌", "error")
+        return
+    chat_id = update.message.chat_id
+    if not context.args:
+        await send_and_delete(context, chat_id, "Usage: /removesolexaroom #tag", "admin")
+        return
+    tag = context.args[0].lower()
+    if not tag.startswith("#"):
+        await send_and_delete(context, chat_id, "Tag must start with # (e.g., #newroom)", "error")
+        return
+    if tag in chat_ids_map:
+        del chat_ids_map[tag]
+        save_chat_ids()
+        await send_and_delete(context, chat_id, f"Room '{tag}' removed ✅", "admin")
+    else:
+        await send_and_delete(context, chat_id, f"Room '{tag}' not found ❌", "error")
+
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_text: str, media_type=None, file_id=None):
     chat_id = update.message.chat_id
     if update.message.chat.type == "private":
@@ -454,37 +498,49 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         await send_and_delete(context, chat_id, "No permission ❌", "error")
         return
     
-    # Split the message to extract command and tags, preserving the rest of the text with newlines
+    # Split the message to extract command and targets, preserving the rest of the text with newlines
     parts = message_text.split(None, 1)  # Split on first whitespace to get command
     if len(parts) < 2:
-        await send_and_delete(context, chat_id, "Usage: /solexabroadcast #chat1 #chat2 Message here\nAvailable tags: #solexamain, #trusted, #bottest", "admin")
+        await send_and_delete(context, chat_id, "Usage: /solexabroadcast #chat1 #chat2 Message here\nOr: /solexabroadcast chat_id1 chat_id2 Message here\nAvailable tags: #solexamain, #trusted, #bottest", "admin")
         return
     
     remaining_text = parts[1]
-    # Extract tags and message content
+    # Extract targets (tags or chat IDs) and message content
     words = remaining_text.split()
     target_tags = []
+    target_chat_ids = []
     message_start_idx = 0
     for i, word in enumerate(words):
         if word.startswith("#"):
             target_tags.append(word)
             message_start_idx = i + 1
+        elif word.startswith("-") and word.lstrip("-").isdigit():
+            try:
+                target_chat_ids.append(int(word))
+                message_start_idx = i + 1
+            except ValueError:
+                await send_and_delete(context, chat_id, f"Invalid chat ID: {word}", "error")
+                return
         else:
             break
     
-    if not target_tags:
-        await send_and_delete(context, chat_id, "Please specify at least one chat tag (e.g., #solexamain)", "admin")
+    if not target_tags and not target_chat_ids:
+        await send_and_delete(context, chat_id, "Please specify at least one chat tag (e.g., #solexamain) or chat ID (e.g., -1001234567890)", "admin")
         return
     
     # Reconstruct the message content, preserving newlines
-    broadcast_content = remaining_text[remaining_text.index(target_tags[-1]) + len(target_tags[-1]):].strip()
+    broadcast_content = remaining_text[remaining_text.index(words[message_start_idx - 1]) + len(words[message_start_idx - 1]):].strip()
     
     valid_targets = []
+    # Resolve tags to chat IDs
     for tag in target_tags:
         if tag in chat_ids_map:
             valid_targets.append(chat_ids_map[tag])
         else:
             await send_and_delete(context, chat_id, f"Chat tag {tag} not found in Solexa's rooms", "error")
+    
+    # Add raw chat IDs directly
+    valid_targets.extend(target_chat_ids)
     
     if not valid_targets:
         await send_and_delete(context, chat_id, "No valid chat targets specified", "error")
@@ -813,7 +869,10 @@ async def solexahelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "• `/setsolexawelcomeautodelete ON|OFF|STATUS`: Toggle auto-delete of old welcome messages on new joins.\n\n"
         "*📢 Broadcast*\n"
         "• `/solexabroadcast #tag1 #tag2 Message`: Broadcast to tagged chats (e.g., #solexamain, #trusted, #bottest).\n"
-        "  Supports text or media with caption.\n\n"
+        "• `/solexabroadcast chat_id1 chat_id2 Message`: Broadcast to chats by ID (e.g., -1001234567890).\n"
+        "  Supports text or media with caption.\n"
+        "• `/addsolexaroom #tag chat_id`: Add a room to the broadcast list (e.g., /addsolexaroom #newroom -1001234567890).\n"
+        "• `/removesolexaroom #tag`: Remove a room from the broadcast list.\n\n"
         "*🎉 General Features*\n"
         "• Keywords like `profits`, `slut`, `launch cat` trigger media.\n"
         "• Use `*bold*`, `_italics_`, `[links](https://example.com)` for formatting.\n\n"
@@ -1283,6 +1342,8 @@ application.add_handler(CommandHandler("solexafilters", solexafilters_command))
 application.add_handler(CommandHandler("removesolexafilter", remove_filter))
 application.add_handler(CommandHandler("solexafixwelcome", solexafixwelcome_command))
 application.add_handler(CommandHandler("solexabroadcast", solexabroadcast_command))
+application.add_handler(CommandHandler("addsolexaroom", add_solexa_room))
+application.add_handler(CommandHandler("removesolexaroom", remove_solexa_room))
 
 application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.ANIMATION | filters.VOICE, handle_media_message))
 application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
